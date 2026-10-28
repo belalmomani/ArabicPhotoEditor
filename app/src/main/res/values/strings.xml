@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">محرر الصور</string>
+
+    <string name="back">رجوع</string>
+    <string name="undo">تراجع</string>
+    <string name="redo">إعادة</string>
+    <string name="save">حفظ</string>
+    <string name="not_available_yet">غير متاح بعد</string>
+
+    <string name="workspace_title">مساحة العمل</string>
+    <string name="workspace_empty_hint">اختر صورة لتظهر هنا بحجم مناسب</string>
+    <string name="pick_image">اختيار صورة</string>
+    <string name="image_placeholder_label">مكان الصورة (معاينة تصميمية)</string>
+
+    <string name="tool_remove_background">إزالة الخلفية</string>
+    <string name="tool_remove_blemishes">إزالة العيوب</string>
+    <string name="tool_selected">محددة</string>
+    <string name="tools_row_label">الأدوات</string>
+
+    <string name="panel_hint_no_tool">اختر أداة لعرض خياراتها</string>
+    <string name="panel_collapse">طي اللوحة</string>
+    <string name="panel_expand">عرض اللوحة</string>
+    <string name="remove_background_description">تفصل الموضوع الرئيسي عن خلفية الصورة.</string>
+    <string name="options_placeholder">مساحة محجوزة لخيارات الأداة لاحقًا</string>
+    <string name="remove_blemishes_description">امسح فوق العيب لإزالته من الصورة.</string>
+    <string name="brush_size">حجم الفرشاة</string>
+    <string name="brush_controls_placeholder">مساحة محجوزة لعناصر تحكم إضافية</string>
+
+    <string name="compare">قبل / بعد</string>
+    <string name="compare_placeholder">مكان عارض المقارنة</string>
+    <string name="compare_placeholder_hint">يظهر هنا لاحقًا بعد توفر نتيجة</string>
+</resources>
