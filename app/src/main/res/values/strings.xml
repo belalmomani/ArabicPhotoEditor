@@ -11,7 +11,10 @@
     <string name="workspace_title">مساحة العمل</string>
     <string name="workspace_empty_hint">اختر صورة لتظهر هنا بحجم مناسب</string>
     <string name="pick_image">اختيار صورة</string>
-    <string name="image_placeholder_label">مكان الصورة (معاينة تصميمية)</string>
+    <string name="change_image">تغيير الصورة</string>
+    <string name="image_load_failed">تعذّر فتح هذه الصورة. جرّب صورة أخرى.</string>
+    <string name="showing_original">تعرض الآن: الصورة الأصلية</string>
+    <string name="showing_result">تعرض الآن: بعد إزالة الخلفية</string>
 
     <string name="tool_remove_background">إزالة الخلفية</string>
     <string name="tool_remove_blemishes">إزالة العيوب</string>
@@ -21,13 +24,20 @@
     <string name="panel_hint_no_tool">اختر أداة لعرض خياراتها</string>
     <string name="panel_collapse">طي اللوحة</string>
     <string name="panel_expand">عرض اللوحة</string>
-    <string name="remove_background_description">تفصل الموضوع الرئيسي عن خلفية الصورة.</string>
-    <string name="options_placeholder">مساحة محجوزة لخيارات الأداة لاحقًا</string>
+
+    <string name="remove_background_description">تفصل الموضوع الرئيسي عن خلفية الصورة، وتُجرى المعالجة على جهازك دون إنترنت.</string>
+    <string name="bg_pick_first">اختر صورة أولًا لاستخدام هذه الأداة.</string>
+    <string name="bg_processing">جارٍ إزالة الخلفية…</string>
+    <string name="bg_done">تمت إزالة الخلفية. استخدم «قبل / بعد» للمقارنة.</string>
+    <string name="bg_run">إزالة الخلفية</string>
+    <string name="bg_retry">إعادة المحاولة</string>
+    <string name="bg_revert">العودة إلى الصورة الأصلية</string>
+    <string name="bg_failed_generic">تعذّرت إزالة الخلفية. أعد المحاولة أو جرّب صورة أخرى.</string>
+    <string name="bg_failed_memory">الذاكرة غير كافية لمعالجة هذه الصورة. جرّب صورة أصغر.</string>
+
     <string name="remove_blemishes_description">امسح فوق العيب لإزالته من الصورة.</string>
     <string name="brush_size">حجم الفرشاة</string>
     <string name="brush_controls_placeholder">مساحة محجوزة لعناصر تحكم إضافية</string>
 
     <string name="compare">قبل / بعد</string>
-    <string name="compare_placeholder">مكان عارض المقارنة</string>
-    <string name="compare_placeholder_hint">يظهر هنا لاحقًا بعد توفر نتيجة</string>
 </resources>

@@ -1,9 +1,14 @@
 package com.example.arabicphotoeditor.ui.editor
 
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,29 +37,38 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -65,11 +78,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.arabicphotoeditor.R
 import com.example.arabicphotoeditor.ui.theme.ArabicPhotoEditorTheme
 import com.example.arabicphotoeditor.ui.theme.EditorColors
 
-/** Tools available in this release. Display-only: selecting one only changes which panel is shown. */
+private val ErrorColor = Color(0xFFFF8A80)
+
+/** Tools available in this release. Blemish removal is still design-only. */
 enum class EditorTool(
     @StringRes val label: Int,
     @DrawableRes val icon: Int,
@@ -78,41 +94,68 @@ enum class EditorTool(
     RemoveBlemishes(R.string.tool_remove_blemishes, R.drawable.ic_remove_blemishes),
 }
 
+/** Immutable snapshot of what the screen shows. */
+data class EditorState(
+    val image: Bitmap? = null,
+    val result: Bitmap? = null,
+    val status: BgStatus = BgStatus.Idle,
+    @StringRes val errorRes: Int? = null,
+    val showOriginal: Boolean = false,
+) {
+    val processing get() = status == BgStatus.Processing
+}
+
 @Composable
-fun EditorScreen() {
-    // View-only UI state. Nothing here processes or loads an image.
-    var hasImagePreview by rememberSaveable { mutableStateOf(false) }
+fun EditorScreen(vm: EditorViewModel = viewModel()) {
     var selectedTool by rememberSaveable { mutableStateOf<EditorTool?>(null) }
     var panelExpanded by rememberSaveable { mutableStateOf(true) }
-    var showComparePlaceholder by rememberSaveable { mutableStateOf(false) }
     var brushSize by rememberSaveable { mutableFloatStateOf(0.4f) }
 
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.loadImage(uri)
+    }
+
+    val state = EditorState(vm.original, vm.result, vm.status, vm.errorRes, vm.showOriginal)
+
     EditorContent(
-        hasImagePreview = hasImagePreview,
+        state = state,
         selectedTool = selectedTool,
         panelExpanded = panelExpanded,
-        showComparePlaceholder = showComparePlaceholder,
         brushSize = brushSize,
-        onPickImage = { hasImagePreview = true },
-        onSelectTool = { selectedTool = if (selectedTool == it) null else it },
+        onPickImage = {
+            if (!state.processing) {
+                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+        },
+        onSelectTool = { tool ->
+            val next = if (selectedTool == tool) null else tool
+            selectedTool = next
+            if (next == EditorTool.RemoveBackground) {
+                panelExpanded = true
+                vm.removeBackground() // guarded: needs an image, no result yet, nothing running
+            }
+        },
         onTogglePanel = { panelExpanded = !panelExpanded },
-        onToggleCompare = { showComparePlaceholder = !showComparePlaceholder },
+        onToggleCompare = vm::toggleCompare,
         onBrushSizeChange = { brushSize = it },
+        onRunRemoveBackground = vm::removeBackground,
+        onRevert = vm::revertToOriginal,
     )
 }
 
 @Composable
 private fun EditorContent(
-    hasImagePreview: Boolean,
+    state: EditorState,
     selectedTool: EditorTool?,
     panelExpanded: Boolean,
-    showComparePlaceholder: Boolean,
     brushSize: Float,
     onPickImage: () -> Unit,
     onSelectTool: (EditorTool) -> Unit,
     onTogglePanel: () -> Unit,
     onToggleCompare: () -> Unit,
     onBrushSizeChange: (Float) -> Unit,
+    onRunRemoveBackground: () -> Unit,
+    onRevert: () -> Unit,
 ) {
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -126,30 +169,30 @@ private fun EditorContent(
                 val wide = maxWidth >= 600.dp && maxWidth > maxHeight
                 if (wide) {
                     Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Workspace(
-                            hasImagePreview, showComparePlaceholder, onPickImage,
-                            Modifier.weight(1f).fillMaxHeight()
-                        )
+                        Workspace(state, onPickImage, Modifier.weight(1f).fillMaxHeight())
                         Column(
                             Modifier.width(300.dp).fillMaxHeight(),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Column(Modifier.weight(1f)) {
-                                ToolPanel(selectedTool, true, null, brushSize, onBrushSizeChange)
+                                ToolPanel(
+                                    state, selectedTool, true, null, brushSize,
+                                    onBrushSizeChange, onRunRemoveBackground, onRevert,
+                                )
                             }
-                            ToolRow(selectedTool, onSelectTool)
-                            CompareButton(showComparePlaceholder, onToggleCompare)
+                            ToolRow(selectedTool, state.processing, onSelectTool)
+                            CompareButton(state, onToggleCompare)
                         }
                     }
                 } else {
                     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Workspace(
-                            hasImagePreview, showComparePlaceholder, onPickImage,
-                            Modifier.weight(1f).fillMaxWidth()
+                        Workspace(state, onPickImage, Modifier.weight(1f).fillMaxWidth())
+                        ToolPanel(
+                            state, selectedTool, panelExpanded, onTogglePanel, brushSize,
+                            onBrushSizeChange, onRunRemoveBackground, onRevert,
                         )
-                        ToolPanel(selectedTool, panelExpanded, onTogglePanel, brushSize, onBrushSizeChange)
-                        ToolRow(selectedTool, onSelectTool)
-                        CompareButton(showComparePlaceholder, onToggleCompare)
+                        ToolRow(selectedTool, state.processing, onSelectTool)
+                        CompareButton(state, onToggleCompare)
                         Spacer(Modifier.size(2.dp))
                     }
                 }
@@ -222,8 +265,7 @@ private fun TopBarIcon(
 
 @Composable
 private fun Workspace(
-    hasImagePreview: Boolean,
-    showComparePlaceholder: Boolean,
+    state: EditorState,
     onPickImage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -233,38 +275,78 @@ private fun Workspace(
             .background(EditorColors.Workspace),
         contentAlignment = Alignment.Center,
     ) {
-        if (!hasImagePreview) {
+        val image = state.image
+        if (image == null) {
             EmptyWorkspace(onPickImage)
         } else {
-            // Centered, never cropped: the frame keeps its aspect ratio inside the available space.
-            Box(
-                Modifier
-                    .padding(12.dp)
-                    .fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
+            val showResult = state.result != null && !state.showOriginal
+            val shown = if (showResult) state.result!! else image
+            val imageBitmap = remember(shown) { shown.asImageBitmap() }
+            val description = stringResource(
+                if (showResult) R.string.showing_result else R.string.showing_original
+            )
+
+            // Centered and never cropped: the frame keeps the image's aspect ratio inside the free space.
+            Box(Modifier.padding(12.dp).fillMaxSize(), contentAlignment = Alignment.Center) {
                 Box(
                     Modifier
-                        .aspectRatio(3f / 4f)
+                        .aspectRatio(shown.width.toFloat() / shown.height.toFloat())
                         .clip(RoundedCornerShape(6.dp))
-                        .background(EditorColors.SurfaceRaised)
+                        .then(if (showResult) Modifier.checkerboard() else Modifier.background(EditorColors.SurfaceRaised))
                         .border(1.dp, EditorColors.Border, RoundedCornerShape(6.dp)),
+                ) {
+                    Image(
+                        bitmap = imageBitmap,
+                        contentDescription = description,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+
+            if (state.result != null) {
+                Text(
+                    description,
+                    color = EditorColors.TextPrimary,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 10.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(EditorColors.Surface.copy(alpha = 0.9f))
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            if (!state.processing) {
+                TextButton(
+                    onClick = onPickImage,
+                    modifier = Modifier.align(Alignment.TopStart).heightIn(min = 48.dp),
+                ) {
+                    Text(stringResource(R.string.change_image), color = EditorColors.Accent, fontSize = 14.sp)
+                }
+            }
+            if (state.processing) {
+                Box(
+                    Modifier.fillMaxSize().background(EditorColors.Workspace.copy(alpha = 0.6f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(painterResource(R.drawable.ic_image), null, tint = EditorColors.TextSecondary, modifier = Modifier.size(40.dp))
-                        Text(
-                            stringResource(R.string.image_placeholder_label),
-                            color = EditorColors.TextSecondary,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
-                    }
+                    CircularProgressIndicator(color = EditorColors.Accent)
                 }
-                if (showComparePlaceholder) {
-                    ComparePlaceholder(Modifier.align(Alignment.BottomCenter))
-                }
+            }
+        }
+    }
+}
+
+/** Light checkerboard so real transparency is visible in the result. */
+private fun Modifier.checkerboard(): Modifier = drawBehind {
+    val cell = 12.dp.toPx()
+    drawRect(Color(0xFF2A2D32))
+    val cols = (size.width / cell).toInt() + 1
+    val rows = (size.height / cell).toInt() + 1
+    for (r in 0 until rows) {
+        for (c in 0 until cols) {
+            if ((r + c) % 2 == 0) {
+                drawRect(Color(0xFF3A3D44), Offset(c * cell, r * cell), Size(cell, cell))
             }
         }
     }
@@ -300,40 +382,31 @@ private fun EmptyWorkspace(onPickImage: () -> Unit) {
     }
 }
 
-@Composable
-private fun ComparePlaceholder(modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .padding(8.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(EditorColors.Surface.copy(alpha = 0.92f))
-            .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(stringResource(R.string.compare_placeholder), color = EditorColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-        Text(stringResource(R.string.compare_placeholder_hint), color = EditorColors.TextSecondary, fontSize = 13.sp)
-    }
-}
-
 // ---------------------------------------------------------------- Tools
 
 @Composable
-private fun ToolRow(selected: EditorTool?, onSelect: (EditorTool) -> Unit) {
+private fun ToolRow(selected: EditorTool?, busy: Boolean, onSelect: (EditorTool) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         EditorTool.entries.forEach { tool ->
-            ToolButton(tool, tool == selected, { onSelect(tool) }, Modifier.weight(1f))
+            ToolButton(tool, tool == selected, busy, { onSelect(tool) }, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun ToolButton(tool: EditorTool, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ToolButton(
+    tool: EditorTool,
+    isSelected: Boolean,
+    busy: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val label = stringResource(tool.label)
     val selectedText = stringResource(R.string.tool_selected)
     val shape = RoundedCornerShape(12.dp)
     Surface(
         onClick = onClick,
+        enabled = !busy,
         shape = shape,
         color = if (isSelected) EditorColors.AccentContainer else EditorColors.SurfaceRaised,
         border = BorderStroke(if (isSelected) 2.dp else 1.dp, if (isSelected) EditorColors.Accent else EditorColors.Border),
@@ -384,11 +457,14 @@ private fun ToolButton(tool: EditorTool, isSelected: Boolean, onClick: () -> Uni
 
 @Composable
 private fun ToolPanel(
+    state: EditorState,
     tool: EditorTool?,
     expanded: Boolean,
     onToggle: (() -> Unit)?,
     brushSize: Float,
     onBrushSizeChange: (Float) -> Unit,
+    onRunRemoveBackground: () -> Unit,
+    onRevert: () -> Unit,
 ) {
     Column(
         Modifier
@@ -422,7 +498,7 @@ private fun ToolPanel(
         AnimatedVisibility(visible = tool != null && expanded) {
             Column(Modifier.padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when (tool) {
-                    EditorTool.RemoveBackground -> RemoveBackgroundPanel()
+                    EditorTool.RemoveBackground -> RemoveBackgroundPanel(state, onRunRemoveBackground, onRevert)
                     EditorTool.RemoveBlemishes -> RemoveBlemishesPanel(brushSize, onBrushSizeChange)
                     null -> Unit
                 }
@@ -432,13 +508,66 @@ private fun ToolPanel(
 }
 
 @Composable
-private fun RemoveBackgroundPanel() {
+private fun RemoveBackgroundPanel(state: EditorState, onRun: () -> Unit, onRevert: () -> Unit) {
     Text(stringResource(R.string.remove_background_description), color = EditorColors.TextSecondary, fontSize = 14.sp)
-    ReservedArea(R.string.options_placeholder)
+    Column(
+        Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            state.image == null -> StatusText(R.string.bg_pick_first, EditorColors.TextSecondary)
+
+            state.processing -> {
+                StatusText(R.string.bg_processing, EditorColors.TextPrimary)
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = EditorColors.Accent,
+                    trackColor = EditorColors.Border,
+                )
+            }
+
+            state.result != null -> {
+                StatusText(R.string.bg_done, EditorColors.TextPrimary)
+                OutlinedButton(
+                    onClick = onRevert,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, EditorColors.Border),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EditorColors.TextPrimary),
+                ) { Text(stringResource(R.string.bg_revert), fontSize = 15.sp) }
+            }
+
+            state.status == BgStatus.Failed -> {
+                StatusText(state.errorRes ?: R.string.bg_failed_generic, ErrorColor)
+                RunButton(R.string.bg_retry, onRun)
+            }
+
+            else -> RunButton(R.string.bg_run, onRun)
+        }
+    }
+}
+
+@Composable
+private fun StatusText(@StringRes text: Int, color: Color) {
+    Text(stringResource(text), color = color, fontSize = 14.sp)
+}
+
+@Composable
+private fun RunButton(@StringRes label: Int, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = EditorColors.Accent,
+            contentColor = EditorColors.OnAccent,
+        ),
+    ) { Text(stringResource(label), fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
 }
 
 @Composable
 private fun RemoveBlemishesPanel(brushSize: Float, onChange: (Float) -> Unit) {
+    // Design only: the slider and preview reflect brush size, nothing is painted or removed yet.
     Text(stringResource(R.string.remove_blemishes_description), color = EditorColors.TextSecondary, fontSize = 14.sp)
     Text(stringResource(R.string.brush_size), color = EditorColors.TextPrimary, fontSize = 14.sp)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -452,7 +581,6 @@ private fun RemoveBlemishesPanel(brushSize: Float, onChange: (Float) -> Unit) {
                 inactiveTrackColor = EditorColors.Border,
             ),
         )
-        // Visual preview of the brush size (6dp..44dp inside a fixed 48dp slot).
         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
             Box(
                 Modifier
@@ -481,16 +609,21 @@ private fun ReservedArea(@StringRes text: Int) {
 
 // ---------------------------------------------------------------- Compare
 
+/** Enabled only when a real result exists; toggles between the result and the untouched original. */
 @Composable
-private fun CompareButton(active: Boolean, onClick: () -> Unit) {
+private fun CompareButton(state: EditorState, onClick: () -> Unit) {
+    val enabled = state.result != null
+    val active = enabled && state.showOriginal
     OutlinedButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(if (active) 2.dp else 1.dp, if (active) EditorColors.Accent else EditorColors.Border),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = if (active) EditorColors.AccentContainer else Color.Transparent,
             contentColor = EditorColors.TextPrimary,
+            disabledContentColor = EditorColors.TextSecondary.copy(alpha = 0.55f),
         ),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     ) {
@@ -502,32 +635,49 @@ private fun CompareButton(active: Boolean, onClick: () -> Unit) {
 
 // ---------------------------------------------------------------- Previews
 
+private fun sampleBitmap(): Bitmap =
+    Bitmap.createBitmap(300, 400, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF6C8EBF.toInt()) }
+
+private val previewImage = sampleBitmap()
+
 @Preview(name = "1 - no image", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
 @Composable
 private fun PreviewEmpty() = ArabicPhotoEditorTheme {
-    EditorContent(false, null, true, false, 0.4f, {}, {}, {}, {}, {})
+    EditorContent(EditorState(), null, true, 0.4f, {}, {}, {}, {}, {}, {}, {})
 }
 
 @Preview(name = "2 - image", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
 @Composable
 private fun PreviewImage() = ArabicPhotoEditorTheme {
-    EditorContent(true, null, true, false, 0.4f, {}, {}, {}, {}, {})
+    EditorContent(EditorState(image = previewImage), null, true, 0.4f, {}, {}, {}, {}, {}, {}, {})
 }
 
-@Preview(name = "3 - blemishes tool", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
+@Preview(name = "3 - processing", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
+@Composable
+private fun PreviewProcessing() = ArabicPhotoEditorTheme {
+    EditorContent(
+        EditorState(image = previewImage, status = BgStatus.Processing),
+        EditorTool.RemoveBackground, true, 0.4f, {}, {}, {}, {}, {}, {}, {},
+    )
+}
+
+@Preview(name = "4 - failed", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
+@Composable
+private fun PreviewFailed() = ArabicPhotoEditorTheme {
+    EditorContent(
+        EditorState(image = previewImage, status = BgStatus.Failed, errorRes = R.string.bg_failed_generic),
+        EditorTool.RemoveBackground, true, 0.4f, {}, {}, {}, {}, {}, {}, {},
+    )
+}
+
+@Preview(name = "5 - blemishes (design only)", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
 @Composable
 private fun PreviewBlemishes() = ArabicPhotoEditorTheme {
-    EditorContent(true, EditorTool.RemoveBlemishes, true, true, 0.6f, {}, {}, {}, {}, {})
+    EditorContent(EditorState(image = previewImage), EditorTool.RemoveBlemishes, true, 0.6f, {}, {}, {}, {}, {}, {}, {})
 }
 
-@Preview(name = "4 - remove background", showBackground = true, widthDp = 360, heightDp = 740, locale = "ar")
-@Composable
-private fun PreviewRemoveBackground() = ArabicPhotoEditorTheme {
-    EditorContent(true, EditorTool.RemoveBackground, true, false, 0.4f, {}, {}, {}, {}, {})
-}
-
-@Preview(name = "5 - tablet/landscape", showBackground = true, widthDp = 800, heightDp = 400, locale = "ar")
+@Preview(name = "6 - tablet/landscape", showBackground = true, widthDp = 800, heightDp = 400, locale = "ar")
 @Composable
 private fun PreviewWide() = ArabicPhotoEditorTheme {
-    EditorContent(true, EditorTool.RemoveBlemishes, true, false, 0.4f, {}, {}, {}, {}, {})
+    EditorContent(EditorState(image = previewImage), EditorTool.RemoveBackground, true, 0.4f, {}, {}, {}, {}, {}, {}, {})
 }
