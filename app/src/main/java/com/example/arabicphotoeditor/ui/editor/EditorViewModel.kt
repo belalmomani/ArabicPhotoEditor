@@ -3,7 +3,6 @@ package com.example.arabicphotoeditor.ui.editor
 import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
-import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -32,7 +31,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var status by mutableStateOf(BgStatus.Idle)
         private set
-    @StringRes
+    /** A string resource id (R.string.*) describing the last failure, or null. */
     var errorRes by mutableStateOf<Int?>(null)
         private set
     var showOriginal by mutableStateOf(false)
