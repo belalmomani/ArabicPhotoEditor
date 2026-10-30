@@ -1,6 +1,9 @@
 package com.example.arabicphotoeditor.ui.editor
 
 import android.graphics.Bitmap
+import android.widget.Toast
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -115,9 +118,23 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
         if (uri != null) vm.loadImage(uri)
     }
 
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
+        if (uri != null) vm.saveResult(uri)
+    }
+
+    val context = LocalContext.current
+    val message = vm.message
+    LaunchedEffect(message) {
+        if (message != null) {
+            Toast.makeText(context, context.getString(message), Toast.LENGTH_SHORT).show()
+            vm.messageShown()
+        }
+    }
+
     val state = EditorState(vm.original, vm.result, vm.status, vm.errorRes, vm.showOriginal)
 
     EditorContent(
+        onSave = { saver.launch("photo_no_background.png") },
         state = state,
         selectedTool = selectedTool,
         panelExpanded = panelExpanded,
@@ -156,6 +173,7 @@ private fun EditorContent(
     onBrushSizeChange: (Float) -> Unit,
     onRunRemoveBackground: () -> Unit,
     onRevert: () -> Unit,
+    onSave: () -> Unit = {},
 ) {
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -164,7 +182,7 @@ private fun EditorContent(
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
-            TopBar()
+            TopBar(saveEnabled = state.result != null && !state.processing, onSave = onSave)
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 600.dp && maxWidth > maxHeight
                 if (wide) {
@@ -204,7 +222,7 @@ private fun EditorContent(
 // ---------------------------------------------------------------- Top bar
 
 @Composable
-private fun TopBar() {
+private fun TopBar(saveEnabled: Boolean, onSave: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -226,10 +244,10 @@ private fun TopBar() {
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
         )
-        // Display-only: undo / redo / save are not implemented yet.
+        // Undo / redo are display-only for now. Save exports the background-removed result as PNG.
         TopBarIcon(R.drawable.ic_undo, null, stringResource(R.string.undo), enabled = false)
         TopBarIcon(R.drawable.ic_redo, null, stringResource(R.string.redo), enabled = false)
-        TopBarIcon(R.drawable.ic_save, null, stringResource(R.string.save), enabled = false)
+        TopBarIcon(R.drawable.ic_save, null, stringResource(R.string.save), enabled = saveEnabled, onClick = onSave)
     }
 }
 

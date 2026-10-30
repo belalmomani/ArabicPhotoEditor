@@ -7,6 +7,8 @@
     <string name="redo">إعادة</string>
     <string name="save">حفظ</string>
     <string name="not_available_yet">غير متاح بعد</string>
+    <string name="save_done">تم حفظ الصورة بصيغة PNG</string>
+    <string name="save_failed">تعذّر حفظ الصورة. حاول مرة أخرى.</string>
 
     <string name="workspace_title">مساحة العمل</string>
     <string name="workspace_empty_hint">اختر صورة لتظهر هنا بحجم مناسب</string>

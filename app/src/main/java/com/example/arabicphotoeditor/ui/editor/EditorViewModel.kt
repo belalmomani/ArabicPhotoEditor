@@ -82,6 +82,37 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Message to show once (R.string.*), set after a save attempt. */
+    var message by mutableStateOf<Int?>(null)
+        private set
+    private var saving = false
+
+    fun messageShown() {
+        message = null
+    }
+
+    /** Writes the transparent result as a lossless PNG to the document the user chose. */
+    fun saveResult(uri: Uri) {
+        val bitmap = result ?: return
+        if (saving) return
+        saving = true
+        viewModelScope.launch {
+            val ok = try {
+                withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    } ?: false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                false
+            }
+            message = if (ok) R.string.save_done else R.string.save_failed
+            saving = false
+        }
+    }
+
     fun toggleCompare() {
         if (result != null) showOriginal = !showOriginal
     }
