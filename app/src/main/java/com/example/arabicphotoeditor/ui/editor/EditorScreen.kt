@@ -104,6 +104,7 @@ data class EditorState(
     val status: BgStatus = BgStatus.Idle,
     @StringRes val errorRes: Int? = null,
     val showOriginal: Boolean = false,
+    val canRedo: Boolean = false,
 ) {
     val processing get() = status == BgStatus.Processing
 }
@@ -131,9 +132,14 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
         }
     }
 
-    val state = EditorState(vm.original, vm.result, vm.status, vm.errorRes, vm.showOriginal)
+    val state = EditorState(
+        vm.original, vm.result, vm.status, vm.errorRes, vm.showOriginal,
+        canRedo = vm.redoResult != null,
+    )
 
     EditorContent(
+        onUndo = vm::undo,
+        onRedo = vm::redo,
         onSave = { saver.launch("photo_no_background.png") },
         state = state,
         selectedTool = selectedTool,
@@ -174,6 +180,8 @@ private fun EditorContent(
     onRunRemoveBackground: () -> Unit,
     onRevert: () -> Unit,
     onSave: () -> Unit = {},
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
 ) {
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -182,7 +190,14 @@ private fun EditorContent(
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
-            TopBar(saveEnabled = state.result != null && !state.processing, onSave = onSave)
+            TopBar(
+                undoEnabled = state.result != null && !state.processing,
+                redoEnabled = state.canRedo && !state.processing,
+                saveEnabled = state.result != null && !state.processing,
+                onUndo = onUndo,
+                onRedo = onRedo,
+                onSave = onSave,
+            )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 600.dp && maxWidth > maxHeight
                 if (wide) {
@@ -222,7 +237,14 @@ private fun EditorContent(
 // ---------------------------------------------------------------- Top bar
 
 @Composable
-private fun TopBar(saveEnabled: Boolean, onSave: () -> Unit) {
+private fun TopBar(
+    undoEnabled: Boolean,
+    redoEnabled: Boolean,
+    saveEnabled: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onSave: () -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -244,9 +266,9 @@ private fun TopBar(saveEnabled: Boolean, onSave: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
         )
-        // Undo / redo are display-only for now. Save exports the background-removed result as PNG.
-        TopBarIcon(R.drawable.ic_undo, null, stringResource(R.string.undo), enabled = false)
-        TopBarIcon(R.drawable.ic_redo, null, stringResource(R.string.redo), enabled = false)
+        // Undo / redo act on the background-removal step; save exports its result as PNG.
+        TopBarIcon(R.drawable.ic_undo, null, stringResource(R.string.undo), enabled = undoEnabled, onClick = onUndo)
+        TopBarIcon(R.drawable.ic_redo, null, stringResource(R.string.redo), enabled = redoEnabled, onClick = onRedo)
         TopBarIcon(R.drawable.ic_save, null, stringResource(R.string.save), enabled = saveEnabled, onClick = onSave)
     }
 }

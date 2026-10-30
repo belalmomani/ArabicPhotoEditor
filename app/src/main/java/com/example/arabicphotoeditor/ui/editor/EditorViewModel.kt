@@ -48,6 +48,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val bitmap = withContext(Dispatchers.IO) { ImageLoader.load(getApplication(), uri) }
                 original = bitmap
                 result = null
+                redoResult = null
                 showOriginal = false
                 status = BgStatus.Idle
                 errorRes = null
@@ -67,6 +68,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (status == BgStatus.Processing || result != null) return
         status = BgStatus.Processing
         errorRes = null
+        redoResult = null
         job = viewModelScope.launch {
             try {
                 val out = withContext(Dispatchers.Default) { remover.remove(source) }
@@ -117,14 +119,32 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (result != null) showOriginal = !showOriginal
     }
 
-    /** Discards the result and goes back to the untouched original. */
-    fun revertToOriginal() {
+    /** A result that was undone and can be brought back with [redo]. */
+    var redoResult by mutableStateOf<Bitmap?>(null)
+        private set
+
+    /** Goes back to the untouched original; the result is kept so [redo] can restore it. */
+    fun undo() {
+        val current = result ?: return
         if (status == BgStatus.Processing) return
+        redoResult = current
         result = null
         showOriginal = false
         status = BgStatus.Idle
         errorRes = null
     }
+
+    fun redo() {
+        val saved = redoResult ?: return
+        if (status == BgStatus.Processing) return
+        result = saved
+        redoResult = null
+        showOriginal = false
+        status = BgStatus.Done
+        errorRes = null
+    }
+
+    fun revertToOriginal() = undo()
 
     override fun onCleared() {
         remover.close()
