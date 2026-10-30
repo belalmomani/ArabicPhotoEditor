@@ -1,6 +1,15 @@
 package com.example.arabicphotoeditor.ui.editor
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import android.widget.Toast
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
@@ -104,9 +113,12 @@ data class EditorState(
     val status: BgStatus = BgStatus.Idle,
     @StringRes val errorRes: Int? = null,
     val showOriginal: Boolean = false,
+    val canUndo: Boolean = false,
     val canRedo: Boolean = false,
+    val retouching: Boolean = false,
 ) {
-    val processing get() = status == BgStatus.Processing
+    /** True while any operation (background removal or blemish removal) is running. */
+    val processing get() = status == BgStatus.Processing || retouching
 }
 
 @Composable
@@ -120,7 +132,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     }
 
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
-        if (uri != null) vm.saveResult(uri)
+        if (uri != null) vm.saveImage(uri)
     }
 
     val context = LocalContext.current
@@ -134,10 +146,13 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
 
     val state = EditorState(
         vm.original, vm.result, vm.status, vm.errorRes, vm.showOriginal,
-        canRedo = vm.redoResult != null,
+        canUndo = vm.canUndo,
+        canRedo = vm.canRedo,
+        retouching = vm.retouching,
     )
 
     EditorContent(
+        onStroke = vm::removeBlemish,
         onUndo = vm::undo,
         onRedo = vm::redo,
         onSave = { saver.launch("photo_no_background.png") },
@@ -182,7 +197,12 @@ private fun EditorContent(
     onSave: () -> Unit = {},
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
+    onStroke: (List<Pair<Float, Float>>, Float) -> Unit = { _, _ -> },
 ) {
+    // Brush drawing is only offered while the blemish tool is active and the visible image is the editable one.
+    val brushEnabled = selectedTool == EditorTool.RemoveBlemishes &&
+        state.image != null && !state.processing && !(state.result != null && state.showOriginal)
+
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(
             Modifier
@@ -191,9 +211,9 @@ private fun EditorContent(
                 .navigationBarsPadding()
         ) {
             TopBar(
-                undoEnabled = state.result != null && !state.processing,
+                undoEnabled = state.canUndo && !state.processing,
                 redoEnabled = state.canRedo && !state.processing,
-                saveEnabled = state.result != null && !state.processing,
+                saveEnabled = state.image != null && !state.processing,
                 onUndo = onUndo,
                 onRedo = onRedo,
                 onSave = onSave,
@@ -202,7 +222,7 @@ private fun EditorContent(
                 val wide = maxWidth >= 600.dp && maxWidth > maxHeight
                 if (wide) {
                     Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Workspace(state, onPickImage, Modifier.weight(1f).fillMaxHeight())
+                        Workspace(state, onPickImage, brushEnabled, brushSize, onStroke, Modifier.weight(1f).fillMaxHeight())
                         Column(
                             Modifier.width(300.dp).fillMaxHeight(),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -219,7 +239,7 @@ private fun EditorContent(
                     }
                 } else {
                     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Workspace(state, onPickImage, Modifier.weight(1f).fillMaxWidth())
+                        Workspace(state, onPickImage, brushEnabled, brushSize, onStroke, Modifier.weight(1f).fillMaxWidth())
                         ToolPanel(
                             state, selectedTool, panelExpanded, onTogglePanel, brushSize,
                             onBrushSizeChange, onRunRemoveBackground, onRevert,
@@ -307,6 +327,9 @@ private fun TopBarIcon(
 private fun Workspace(
     state: EditorState,
     onPickImage: () -> Unit,
+    brushEnabled: Boolean,
+    brushSize: Float,
+    onStroke: (List<Pair<Float, Float>>, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -341,6 +364,9 @@ private fun Workspace(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    if (brushEnabled) {
+                        BrushOverlay(brushSize, onStroke, Modifier.fillMaxSize())
+                    }
                 }
             }
 
@@ -372,6 +398,64 @@ private fun Workspace(
                 ) {
                     CircularProgressIndicator(color = EditorColors.Accent)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Transparent drawing layer over the image. The stroke is shown in red while dragging, then reported in
+ * coordinates normalized to the image frame (0..1) with the brush radius as a fraction of its width.
+ */
+@Composable
+private fun BrushOverlay(
+    brushSize: Float,
+    onStroke: (List<Pair<Float, Float>>, Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var points by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    val radiusFraction = 0.004f + 0.036f * brushSize
+    val currentOnStroke by rememberUpdatedState(onStroke)
+
+    fun finish(size: androidx.compose.ui.unit.IntSize) {
+        val stroke = points
+        points = emptyList()
+        if (stroke.isNotEmpty() && size.width > 0 && size.height > 0) {
+            currentOnStroke(stroke.map { (it.x / size.width) to (it.y / size.height) }, radiusFraction)
+        }
+    }
+
+    Canvas(
+        modifier
+            .pointerInput(radiusFraction) {
+                detectTapGestures(onTap = { offset ->
+                    points = listOf(offset)
+                    finish(size)
+                })
+            }
+            .pointerInput(radiusFraction) {
+                detectDragGestures(
+                    onDragStart = { offset -> points = listOf(offset) },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        points = points + change.position
+                    },
+                    onDragEnd = { finish(size) },
+                    onDragCancel = { points = emptyList() },
+                )
+            }
+    ) {
+        val brush = Color(0xFFFF5252).copy(alpha = 0.45f)
+        val diameter = 2f * radiusFraction * size.width
+        when (points.size) {
+            0 -> Unit
+            1 -> drawCircle(brush, radius = diameter / 2f, center = points[0])
+            else -> {
+                val path = Path().apply {
+                    moveTo(points[0].x, points[0].y)
+                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+                }
+                drawPath(path, brush, style = Stroke(width = diameter, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
     }
@@ -539,7 +623,7 @@ private fun ToolPanel(
             Column(Modifier.padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when (tool) {
                     EditorTool.RemoveBackground -> RemoveBackgroundPanel(state, onRunRemoveBackground, onRevert)
-                    EditorTool.RemoveBlemishes -> RemoveBlemishesPanel(brushSize, onBrushSizeChange)
+                    EditorTool.RemoveBlemishes -> RemoveBlemishesPanel(state, brushSize, onBrushSizeChange)
                     null -> Unit
                 }
             }
@@ -606,8 +690,7 @@ private fun RunButton(@StringRes label: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RemoveBlemishesPanel(brushSize: Float, onChange: (Float) -> Unit) {
-    // Design only: the slider and preview reflect brush size, nothing is painted or removed yet.
+private fun RemoveBlemishesPanel(state: EditorState, brushSize: Float, onChange: (Float) -> Unit) {
     Text(stringResource(R.string.remove_blemishes_description), color = EditorColors.TextSecondary, fontSize = 14.sp)
     Text(stringResource(R.string.brush_size), color = EditorColors.TextPrimary, fontSize = 14.sp)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -630,21 +713,18 @@ private fun RemoveBlemishesPanel(brushSize: Float, onChange: (Float) -> Unit) {
             )
         }
     }
-    ReservedArea(R.string.brush_controls_placeholder)
-}
-
-@Composable
-private fun ReservedArea(@StringRes text: Int) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 44.dp)
-            .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
-            .padding(10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(stringResource(text), color = EditorColors.TextSecondary.copy(alpha = 0.8f), fontSize = 13.sp, textAlign = TextAlign.Center)
-    }
+    Text(
+        stringResource(
+            when {
+                state.image == null -> R.string.blemish_pick_first
+                state.result != null && state.showOriginal -> R.string.blemish_show_result
+                else -> R.string.blemish_hint
+            }
+        ),
+        color = EditorColors.TextSecondary,
+        fontSize = 13.sp,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    )
 }
 
 // ---------------------------------------------------------------- Compare

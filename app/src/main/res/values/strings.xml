@@ -37,9 +37,12 @@
     <string name="bg_failed_generic">تعذّرت إزالة الخلفية. أعد المحاولة أو جرّب صورة أخرى.</string>
     <string name="bg_failed_memory">الذاكرة غير كافية لمعالجة هذه الصورة. جرّب صورة أصغر.</string>
 
-    <string name="remove_blemishes_description">امسح فوق العيب لإزالته من الصورة.</string>
+    <string name="remove_blemishes_description">تزيل العيوب الصغيرة (حبوب، غبار، بقع) بملئها من محيطها. لا تصلح لإزالة أجسام كبيرة.</string>
     <string name="brush_size">حجم الفرشاة</string>
-    <string name="brush_controls_placeholder">مساحة محجوزة لعناصر تحكم إضافية</string>
+    <string name="blemish_hint">اضغط أو اسحب فوق العيب على الصورة. يمكنك التراجع بعد كل خطوة.</string>
+    <string name="blemish_pick_first">اختر صورة أولًا لاستخدام هذه الأداة.</string>
+    <string name="blemish_show_result">أنت تعرض الصورة الأصلية. اضغط «قبل / بعد» للرجوع إلى النتيجة ثم عدّل.</string>
+    <string name="blemish_failed">تعذّرت إزالة العيب. حاول مرة أخرى.</string>
 
     <string name="compare">قبل / بعد</string>
 </resources>
