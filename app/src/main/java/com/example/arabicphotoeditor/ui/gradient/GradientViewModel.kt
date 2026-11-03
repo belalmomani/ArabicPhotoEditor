@@ -264,10 +264,6 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
         p.updateSpec { it.copy(centerX = x.coerceIn(0f, 1f), centerY = y.coerceIn(0f, 1f)) }
     }
 
-    fun setCenter(x: Float, y: Float) = edit(R.string.history_shape) { p ->
-        p.updateSpec { it.copy(centerX = x.coerceIn(0f, 1f), centerY = y.coerceIn(0f, 1f)) }
-    }
-
     fun resetCenter() = editNow(R.string.history_shape) { p ->
         p.updateSpec { it.copy(centerX = 0.5f, centerY = 0.5f, scale = 1f) }
     }
