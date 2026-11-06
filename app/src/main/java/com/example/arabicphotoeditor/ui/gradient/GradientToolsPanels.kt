@@ -75,11 +75,11 @@ private fun stopsBrush(stops: List<ColorStop>): Brush {
 private fun rememberStopsBrush(stops: List<ColorStop>): Brush = remember(stops) { stopsBrush(stops) }
 
 @Composable
-private fun Hint(@StringRes text: Int) =
+fun Hint(@StringRes text: Int) =
     Text(stringResource(text), color = EditorColors.TextSecondary, fontSize = 13.sp)
 
 @Composable
-private fun Heading(@StringRes text: Int) =
+fun Heading(@StringRes text: Int) =
     Text(stringResource(text), color = EditorColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
 
 @StringRes
