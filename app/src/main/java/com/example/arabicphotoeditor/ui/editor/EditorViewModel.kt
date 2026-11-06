@@ -186,6 +186,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------------ gradient studio
+
+    /** Replaces the picture with [bitmap] produced by the gradient studio (undoable). */
+    fun applyGradientResult(bitmap: Bitmap) {
+        if (busy) return
+        if (result != null) commit(original, bitmap) else commit(bitmap, null)
+    }
+
     // ------------------------------------------------------------ save
 
     fun messageShown() {

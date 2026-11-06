@@ -49,12 +49,16 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.graphics.Bitmap
+import com.example.arabicphotoeditor.gradient.BlendMode
+import com.example.arabicphotoeditor.gradient.PhotoMode
 import androidx.compose.ui.unit.sp
 import com.example.arabicphotoeditor.R
 import com.example.arabicphotoeditor.gradient.ColorLab
 import com.example.arabicphotoeditor.gradient.ColorStop
 import com.example.arabicphotoeditor.gradient.GradientPresets
 import com.example.arabicphotoeditor.gradient.GradientSpec
+import com.example.arabicphotoeditor.gradient.GradientType
 import com.example.arabicphotoeditor.ui.theme.EditorColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -394,43 +398,47 @@ private fun LightnessChart(colors: IntArray) {
 // ================================================================== Animate
 
 @Composable
-fun AnimatePanel(vm: GradientViewModel, level: StudioLevel) {
+fun AnimatePanel(vm: GradientViewModel, level: StudioLevel, section: Int) {
     val project = vm.project
     val anim = project.animation
     val pro = level == StudioLevel.Pro
 
-    Hint(R.string.anim_hint)
+    // The play button stays visible in every section so changes can be watched right away.
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         StudioChip(stringResource(if (vm.playing) R.string.anim_stop else R.string.anim_play), vm.playing, vm::togglePlay, enabled = anim.isActive)
         if (!anim.isActive) Text(stringResource(R.string.anim_pick_motion), color = EditorColors.TextSecondary, fontSize = 13.sp)
     }
-
-    Heading(R.string.anim_motion)
-    ChipOptions(R.string.anim_rotate, listOf(-2, -1, 0, 1, 2), anim.rotate, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
-        vm.editAnimation { it.copy(rotate = v) }
-    }
-    ChipOptions(R.string.anim_flow, listOf(0, 1, 2), anim.flow, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
-        vm.editAnimation { it.copy(flow = v) }
-    }
-    ChipOptions(R.string.anim_hue, listOf(0, 1, 2), anim.hueCycles, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
-        vm.editAnimation { it.copy(hueCycles = v) }
-    }
-    LabeledSlider(R.string.anim_orbit, anim.orbit, 0f..0.4f, "${(anim.orbit * 100).toInt()}%", { v -> vm.editAnimation { it.copy(orbit = v) } })
-    LabeledSlider(R.string.anim_pulse, anim.pulse, 0f..0.5f, "${(anim.pulse * 100).toInt()}%", { v -> vm.editAnimation { it.copy(pulse = v) } })
-
-    Heading(R.string.anim_morph)
-    Hint(R.string.anim_morph_hint)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        StudioChip(stringResource(R.string.anim_morph_save), project.morphTarget != null, vm::saveMorphTarget)
-        StudioChip(stringResource(R.string.anim_morph_clear), false, vm::clearMorphTarget, enabled = project.morphTarget != null)
-    }
-
-    Heading(R.string.anim_timing)
-    ChipOptions(R.string.anim_duration, listOf(1000, 2000, 3000, 5000, 8000), anim.durationMs, { "${it / 1000}s" }) { v ->
-        vm.editAnimation { it.copy(durationMs = v) }
-    }
-    if (pro) {
-        ChipOptions(R.string.anim_fps, listOf(12, 15, 24, 30), anim.fps, { "$it" }) { v -> vm.editAnimation { it.copy(fps = v) } }
+    when (section) {
+        0 -> {
+            Hint(R.string.anim_hint)
+            if (project.selected.spec.type == GradientType.Conic && anim.rotate != 0 && anim.flow != 0) Hint(R.string.anim_conflict)
+            ChipOptions(R.string.anim_rotate, listOf(-2, -1, 0, 1, 2), anim.rotate, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
+                vm.editAnimation { it.copy(rotate = v) }
+            }
+            ChipOptions(R.string.anim_flow, listOf(0, 1, 2), anim.flow, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
+                vm.editAnimation { it.copy(flow = v) }
+            }
+            ChipOptions(R.string.anim_hue, listOf(0, 1, 2), anim.hueCycles, { if (it == 0) stringResource(R.string.anim_off) else "${it}×" }) { v ->
+                vm.editAnimation { it.copy(hueCycles = v) }
+            }
+            LabeledSlider(R.string.anim_orbit, anim.orbit, 0f..0.4f, "${(anim.orbit * 100).toInt()}%", { v -> vm.editAnimation { it.copy(orbit = v) } })
+            LabeledSlider(R.string.anim_pulse, anim.pulse, 0f..0.5f, "${(anim.pulse * 100).toInt()}%", { v -> vm.editAnimation { it.copy(pulse = v) } })
+        }
+        1 -> {
+            Hint(R.string.anim_morph_hint)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StudioChip(stringResource(R.string.anim_morph_save), project.morphTarget != null, vm::saveMorphTarget)
+                StudioChip(stringResource(R.string.anim_morph_clear), false, vm::clearMorphTarget, enabled = project.morphTarget != null)
+            }
+        }
+        else -> {
+            ChipOptions(R.string.anim_duration, listOf(1000, 2000, 3000, 5000, 8000), anim.durationMs, { "${it / 1000}s" }) { v ->
+                vm.editAnimation { it.copy(durationMs = v) }
+            }
+            if (pro) {
+                ChipOptions(R.string.anim_fps, listOf(12, 15, 24, 30), anim.fps, { "$it" }) { v -> vm.editAnimation { it.copy(fps = v) } }
+            }
+        }
     }
 }
 
@@ -483,4 +491,61 @@ fun AnimationExportSection(
             StudioChip(stringResource(R.string.export_cancel), false, vm::cancelExport)
         }
     }
+}
+
+// ================================================================== Apply to the photo
+
+@StringRes
+private fun photoBlendLabel(mode: BlendMode) = when (mode) {
+    BlendMode.Normal -> R.string.blend_normal
+    BlendMode.Multiply -> R.string.blend_multiply
+    BlendMode.Screen -> R.string.blend_screen
+    BlendMode.Overlay -> R.string.blend_overlay
+    BlendMode.SoftLight -> R.string.blend_soft_light
+    BlendMode.Add -> R.string.blend_add
+    BlendMode.Difference -> R.string.blend_difference
+}
+
+@Composable
+fun PhotoPanel(vm: GradientViewModel, level: StudioLevel, hasCutout: Boolean, onApply: (Bitmap) -> Unit) {
+    val options = vm.photoApply
+    if (!vm.hasPhoto) {
+        Hint(R.string.photo_none)
+        return
+    }
+    Hint(R.string.photo_hint)
+    val modes = listOf(
+        PhotoMode.Overlay to R.string.photo_mode_overlay,
+        PhotoMode.Map to R.string.photo_mode_map,
+        PhotoMode.Background to R.string.photo_mode_background,
+    )
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        itemsIndexed(modes) { _, (mode, label) ->
+            StudioChip(stringResource(label), mode == options.mode, { vm.editPhotoApply { it.copy(mode = mode) } })
+        }
+    }
+    Hint(
+        when (options.mode) {
+            PhotoMode.Overlay -> R.string.photo_mode_overlay_hint
+            PhotoMode.Map -> R.string.photo_mode_map_hint
+            PhotoMode.Background -> if (hasCutout) R.string.photo_mode_background_hint else R.string.photo_need_cutout
+        },
+    )
+    if (options.mode == PhotoMode.Overlay) {
+        val blends = if (level == StudioLevel.Pro) BlendMode.entries
+        else listOf(BlendMode.Normal, BlendMode.SoftLight, BlendMode.Overlay, BlendMode.Multiply, BlendMode.Screen)
+        Text(stringResource(R.string.photo_blend), color = EditorColors.TextPrimary, fontSize = 14.sp)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(blends) { _, b ->
+                StudioChip(stringResource(photoBlendLabel(b)), b == options.blend, { vm.editPhotoApply { it.copy(blend = b) } })
+            }
+        }
+    }
+    if (options.mode != PhotoMode.Background) {
+        LabeledSlider(R.string.photo_strength, options.opacity, 0f..1f, "${(options.opacity * 100).toInt()}%", { v ->
+            vm.editPhotoApply { it.copy(opacity = v) }
+        })
+    }
+    val canApply = !vm.busy && (options.mode != PhotoMode.Background || hasCutout)
+    StudioChip(stringResource(R.string.photo_apply), false, { vm.applyToPhoto(onApply) }, enabled = canApply)
 }

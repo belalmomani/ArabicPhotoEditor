@@ -119,7 +119,7 @@
     <string name="history_texture">تعديل الملمس</string>
     <string name="history_light">تعديل الإضاءة</string>
     <string name="map_load_failed">تعذّر تحميل الصورة</string>
-    <string name="mesh_hint">اختر عقدة من الشبكة ثم غيّر لونها. تمتزج الألوان بسلاسة بين العقد.</string>
+    <string name="mesh_hint">اضغط على عقدة في المعاينة أو في الشبكة أدناه ثم غيّر لونها. تمتزج الألوان بسلاسة بين العقد.</string>
     <string name="mesh_cols">الأعمدة</string>
     <string name="mesh_rows">الصفوف</string>
     <string name="mesh_node_n">العقدة %1$d</string>
@@ -253,4 +253,35 @@
     <string name="history_stops">تعديل النقاط</string>
     <string name="history_animation">تعديل الحركة</string>
     <string name="history_morph">تعديل التحويل</string>
+
+    <!-- Apply to photo -->
+    <string name="tab_photo">على الصورة</string>
+    <string name="photo_none">لا توجد صورة مفتوحة. افتح صورة من المحرر ثم ارجع إلى الاستوديو لتطبيق التدرج عليها.</string>
+    <string name="photo_hint">المعاينة أعلاه تعرض التدرج على صورتك. اختر طريقة التطبيق ثم اضغط «تطبيق على الصورة».</string>
+    <string name="photo_mode_overlay">طبقة فوق الصورة</string>
+    <string name="photo_mode_map">تلوين السطوع</string>
+    <string name="photo_mode_background">خلفية</string>
+    <string name="photo_mode_overlay_hint">يُدمج التدرج مع الصورة بنمط دمج وشفافية تختارها. تبقى المناطق الشفافة في الصورة شفافة.</string>
+    <string name="photo_mode_map_hint">تُلوَّن الصورة حسب سطوعها: الظلال بلون بداية التدرج والإضاءات بلون نهايته.</string>
+    <string name="photo_mode_background_hint">تُوضع الصورة المقصوصة فوق التدرج، فيصبح التدرج خلفيتها.</string>
+    <string name="photo_need_cutout">وضع الخلفية يحتاج صورة أُزيلت خلفيتها. ارجع إلى المحرر واضغط «إزالة الخلفية» أولاً.</string>
+    <string name="photo_blend">نمط الدمج</string>
+    <string name="photo_strength">قوة التدرج</string>
+    <string name="photo_apply">تطبيق على الصورة</string>
+    <string name="photo_apply_failed">تعذّر تطبيق التدرج على الصورة</string>
+
+    <!-- Layout -->
+    <string name="style_sub_palettes">ألوان جاهزة</string>
+    <string name="style_sub_types">النوع</string>
+    <string name="project_sub_file">الملف</string>
+    <string name="project_sub_image">صورة PNG</string>
+    <string name="project_sub_animation">متحرك</string>
+    <string name="top_export">تصدير</string>
+
+    <!-- Step 2 -->
+    <string name="stop_distribute">توزيع متساوٍ</string>
+    <string name="anim_conflict">تنبيه: في التدرج المخروطي يلغي الدوران وجريان الألوان بعضهما إذا كان اتجاههما واحدًا. جرّب اتجاهين متعاكسين أو أوقف أحدهما.</string>
+    <string name="effects_active_note">توجد تأثيرات مفعّلة (حبيبات أو ضباب أو إضاءة) قد تغيّر مظهر المعاينة.</string>
+    <string name="effects_reset">إعادة ضبط التأثيرات</string>
+    <string name="history_reset_effects">إعادة ضبط التأثيرات</string>
 </resources>

@@ -26,6 +26,8 @@ import com.example.arabicphotoeditor.gradient.GravityPoint
 import com.example.arabicphotoeditor.gradient.Light
 import com.example.arabicphotoeditor.gradient.MapImage
 import com.example.arabicphotoeditor.gradient.PathPoint
+import com.example.arabicphotoeditor.gradient.PhotoApply
+import com.example.arabicphotoeditor.gradient.PhotoCompose
 import com.example.arabicphotoeditor.gradient.TextureSpec
 import com.example.arabicphotoeditor.gradient.GradientPresets
 import com.example.arabicphotoeditor.gradient.GradientProject
@@ -80,6 +82,24 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
     /** Candidates of the Evolution tool (palettes as stops), kept outside the project. */
     val generation = mutableStateListOf<List<ColorStop>>()
 
+    /** How the gradient is combined with the editor's photo, and the photo itself (null when none is open). */
+    var photoApply by mutableStateOf(PhotoApply())
+        private set
+    var hasPhoto by mutableStateOf(false)
+        private set
+
+    /** True while the preview should show the gradient on the photo (the "على الصورة" tab is open). */
+    var photoActive by mutableStateOf(false)
+        private set
+    private var photoFull: Bitmap? = null
+    private var photoSmall: IntArray? = null
+    private var smallW = 1
+    private var smallH = 1
+
+    /** Width / height of what the preview currently shows. */
+    val previewAspect: Float
+        get() = if (photoActive && photoSmall != null) smallW.toFloat() / smallH else project.width.toFloat() / project.height
+
     @Volatile
     private var exportCancelled = false
     private var exportJob: Job? = null
@@ -115,7 +135,13 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
                 do {
                     dirty = false
                     val snapshot = project
-                    preview = withContext(Dispatchers.Default) { renderBitmap(snapshot, PREVIEW_SIDE) }
+                    val small = if (photoActive) photoSmall else null
+                    val options = photoApply
+                    val sw = smallW
+                    val sh = smallH
+                    preview = withContext(Dispatchers.Default) {
+                        if (small != null) renderPhotoBitmap(snapshot, small, sw, sh, options) else renderBitmap(snapshot, PREVIEW_SIDE)
+                    }
                 } while (dirty)
             } finally {
                 rendering = false
@@ -687,6 +713,10 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    fun resetEffects() = editNow(R.string.history_reset_effects) { p ->
+        p.copy(texture = TextureSpec(), lighting = com.example.arabicphotoeditor.gradient.LightingSpec())
+    }
+
     // Surgery: precise stop control
     fun distributeStops() = editNow(R.string.history_stops) { p ->
         p.updateSpec { s ->
@@ -821,6 +851,81 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------------ apply to the editor's photo
+
+    /** Gives the studio the editor's current picture (or null). Safe to call repeatedly with the same bitmap. */
+    fun setPhoto(bitmap: Bitmap?) {
+        if (bitmap === photoFull) return
+        photoFull = bitmap
+        hasPhoto = bitmap != null
+        if (bitmap == null) {
+            photoSmall = null
+            renderPreview()
+            return
+        }
+        viewModelScope.launch {
+            val prepared = withContext(Dispatchers.Default) {
+                try {
+                    val scale = minOf(1f, PREVIEW_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height))
+                    val w = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                    val h = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                    val small = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, w, h, true) else bitmap
+                    val pixels = IntArray(w * h)
+                    small.getPixels(pixels, 0, w, 0, 0, w, h)
+                    Triple(pixels, w, h)
+                } catch (e: Throwable) {
+                    null
+                }
+            }
+            if (prepared != null && bitmap === photoFull) {
+                photoSmall = prepared.first
+                smallW = prepared.second
+                smallH = prepared.third
+                if (photoActive) renderPreview()
+            }
+        }
+    }
+
+    fun setPhotoPreview(active: Boolean) {
+        if (photoActive == active) return
+        photoActive = active
+        renderPreview()
+    }
+
+    fun editPhotoApply(transform: (PhotoApply) -> PhotoApply) {
+        photoApply = transform(photoApply)
+        if (photoActive) renderPreview()
+    }
+
+    /** Renders the gradient onto the full-size photo and hands the result to [onDone] (on the main thread). */
+    fun applyToPhoto(onDone: (Bitmap) -> Unit) {
+        val photo = photoFull ?: return
+        if (busy) return
+        val snapshot = project
+        val options = photoApply
+        busy = true
+        viewModelScope.launch {
+            try {
+                val out = withContext(Dispatchers.Default) {
+                    val w = photo.width
+                    val h = photo.height
+                    val pixels = IntArray(w * h)
+                    photo.getPixels(pixels, 0, w, 0, 0, w, h)
+                    val result = PhotoCompose.apply(pixels, w, h, snapshot, options)
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { it.setPixels(result, 0, w, 0, 0, w, h) }
+                }
+                onDone(out)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OutOfMemoryError) {
+                message = R.string.export_memory
+            } catch (e: Throwable) {
+                message = R.string.photo_apply_failed
+            }
+            busy = false
+        }
+    }
+
     fun messageShown() {
         message = null
     }
@@ -838,6 +943,13 @@ class GradientViewModel(app: Application) : AndroidViewModel(app) {
         const val MIN_PATH_STEP = 0.008
         const val MAP_IMAGE_SIDE = 1024
         const val COMMIT_DELAY_MS = 450L
+
+        fun renderPhotoBitmap(project: GradientProject, photo: IntArray, w: Int, h: Int, options: PhotoApply): Bitmap {
+            val pixels = PhotoCompose.apply(photo, w, h, project, options)
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+            return bitmap
+        }
 
         /** [t] (0..1) renders that moment of the animation loop; null renders the project as edited. */
         fun renderBitmap(project: GradientProject, longSide: Int, t: Float? = null): Bitmap {

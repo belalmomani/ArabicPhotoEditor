@@ -5,12 +5,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +40,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -46,6 +50,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import android.graphics.Bitmap
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -97,6 +103,7 @@ enum class StudioLevel(@StringRes val label: Int) {
 
 enum class StudioTab(@StringRes val label: Int) {
     Style(R.string.tab_style),
+    Photo(R.string.tab_photo),
     /** Its label depends on the layer type, see [sourceTabLabel]. */
     Source(R.string.tab_source),
     Colors(R.string.tab_colors),
@@ -111,13 +118,14 @@ enum class StudioTab(@StringRes val label: Int) {
 }
 
 /** What a finger does on the preview, decided by the selected layer type and the open tab. */
-private enum class PreviewMode { MoveCenter, MoveGravityPoint, MoveLight, DrawPath, None }
+private enum class PreviewMode { MoveCenter, MoveGravityPoint, MoveLight, DrawPath, PickMeshNode, None }
 
 private val GradientType.isBasic: Boolean get() = ordinal <= GradientType.Diamond.ordinal
 
 /** Only the tabs that matter for the selected layer and level are offered. */
 private fun tabsFor(level: StudioLevel, spec: GradientSpec): List<StudioTab> = buildList {
     add(StudioTab.Style)
+    add(StudioTab.Photo)
     if (!spec.type.isBasic) add(StudioTab.Source)
     if (spec.usesStops) add(StudioTab.Colors)
     if (level != StudioLevel.Easy && spec.type.isBasic) add(StudioTab.Shape)
@@ -175,7 +183,13 @@ private fun spreadLabel(spread: Spread) = when (spread) {
 }
 
 @Composable
-fun GradientStudioScreen(onBack: () -> Unit, vm: GradientViewModel = viewModel()) {
+fun GradientStudioScreen(
+    onBack: () -> Unit,
+    photo: Bitmap? = null,
+    hasCutout: Boolean = false,
+    onApplyToPhoto: (Bitmap) -> Unit = {},
+    vm: GradientViewModel = viewModel(),
+) {
     var level by rememberSaveable { mutableStateOf(StudioLevel.Easy) }
     var tab by rememberSaveable { mutableStateOf(StudioTab.Style) }
     var stopIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -186,11 +200,18 @@ fun GradientStudioScreen(onBack: () -> Unit, vm: GradientViewModel = viewModel()
     var drawingPath by rememberSaveable { mutableStateOf(false) }
     var animSize by rememberSaveable { mutableIntStateOf(480) }
     var animLoops by rememberSaveable { mutableIntStateOf(1) }
+    var panelOpen by rememberSaveable { mutableStateOf(true) }
+    var sub by rememberSaveable { mutableIntStateOf(0) }
 
     val project = vm.project
     val spec = project.selected.spec
     val tabs = tabsFor(level, spec)
     val activeTab = if (tab in tabs) tab else tabs.first()
+    val section = sub
+
+    LaunchedEffect(photo) { vm.setPhoto(photo) }
+    LaunchedEffect(activeTab, vm.hasPhoto) { vm.setPhotoPreview(activeTab == StudioTab.Photo && vm.hasPhoto) }
+    DisposableEffect(Unit) { onDispose { vm.setPhotoPreview(false) } }
     val selectedStop = stopIndex.coerceIn(0, spec.stops.lastIndex)
     val selectedGravity = gravityIndex.coerceIn(0, spec.gravity.points.lastIndex.coerceAtLeast(0))
     val lights = project.lighting.lights
@@ -199,6 +220,7 @@ fun GradientStudioScreen(onBack: () -> Unit, vm: GradientViewModel = viewModel()
     val mode = when {
         activeTab == StudioTab.Effects && selectedLight >= 0 -> PreviewMode.MoveLight
         activeTab == StudioTab.Source && spec.type == GradientType.Gravity -> PreviewMode.MoveGravityPoint
+        activeTab == StudioTab.Source && spec.type == GradientType.Mesh -> PreviewMode.PickMeshNode
         activeTab == StudioTab.Source && spec.type == GradientType.Path && drawingPath -> PreviewMode.DrawPath
         spec.type.isBasic -> PreviewMode.MoveCenter
         else -> PreviewMode.None
@@ -234,71 +256,101 @@ fun GradientStudioScreen(onBack: () -> Unit, vm: GradientViewModel = viewModel()
 
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            StudioTopBar(vm, onBack)
-            LevelRow(level) { level = it }
+            StudioTopBar(
+                vm = vm,
+                level = level,
+                onLevel = { level = it },
+                onExport = {
+                    tab = StudioTab.Project
+                    sub = 1
+                    panelOpen = true
+                },
+                onBack = onBack,
+            )
+            // The canvas takes all the space the panels do not need.
             PreviewArea(
                 vm = vm,
                 mode = mode,
                 tab = activeTab,
                 gravityIndex = selectedGravity,
                 lightIndex = selectedLight,
-                showHint = level == StudioLevel.Easy && mode == PreviewMode.MoveCenter,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                meshIndex = meshIndex,
+                onPickMesh = { meshIndex = it },
+                showHint = level == StudioLevel.Easy && mode == PreviewMode.MoveCenter && !panelOpen,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
             )
-            TabRow(tabs, activeTab, spec.type) { tab = it }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 270.dp)
-                    .padding(horizontal = 12.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(EditorColors.Surface)
-                    .border(1.dp, EditorColors.Border, RoundedCornerShape(12.dp))
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                when (activeTab) {
-                    StudioTab.Style -> StylePanel(vm, spec, level) { picked -> if (!picked.isBasic) tab = StudioTab.Source }
-                    StudioTab.Source -> SourcePanel(
-                        vm = vm,
-                        spec = spec,
-                        level = level,
-                        meshIndex = meshIndex,
-                        onMeshIndex = { meshIndex = it },
-                        gravityIndex = selectedGravity,
-                        onGravityIndex = { gravityIndex = it },
-                        drawingPath = drawingPath,
-                        onDrawingPath = { drawingPath = it },
-                        onPickMapImage = {
-                            mapPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                    )
-                    StudioTab.Colors -> ColorsPanel(vm, spec, level, selectedStop) { stopIndex = it }
-                    StudioTab.Shape -> ShapePanel(vm, spec, level)
-                    StudioTab.Effects -> EffectsPanel(vm, level, selectedLight) { lightIndex = it }
-                    StudioTab.Evolve -> EvolvePanel(vm, spec, level)
-                    StudioTab.Lab -> LabPanel(vm, spec)
-                    StudioTab.Animate -> AnimatePanel(vm, level)
-                    StudioTab.Layers -> LayersPanel(vm)
-                    StudioTab.History -> HistoryPanel(vm)
-                    StudioTab.Project -> ProjectPanel(
-                        vm = vm,
-                        exportSize = exportSize,
-                        onExportSize = { exportSize = it },
-                        onSave = { saveLauncher.launch("gradient_project.json") },
-                        onOpen = { openLauncher.launch(arrayOf("*/*")) },
-                        onExport = { exportLauncher.launch("gradient.png") },
-                        animSize = animSize,
-                        onAnimSize = { animSize = it },
-                        animLoops = animLoops,
-                        onAnimLoops = { animLoops = it },
-                        onExportGif = { gifLauncher.launch("gradient.gif") },
-                        onExportMp4 = { mp4Launcher.launch("gradient.mp4") },
-                    )
+            AnimatedVisibility(visible = panelOpen) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(EditorColors.Surface)
+                        .border(1.dp, EditorColors.Border),
+                ) {
+                    val subs = subLabels(activeTab, spec)
+                    if (subs.isNotEmpty()) SubStrip(subs, section.coerceIn(0, subs.lastIndex)) { sub = it }
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 230.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        when (activeTab) {
+                            StudioTab.Photo -> PhotoPanel(vm, level, hasCutout, onApplyToPhoto)
+                            StudioTab.Style -> StylePanel(vm, spec, level, section) { picked ->
+                                if (!picked.isBasic) tab = StudioTab.Source
+                            }
+                            StudioTab.Source -> SourcePanel(
+                                vm = vm,
+                                spec = spec,
+                                level = level,
+                                meshIndex = meshIndex,
+                                onMeshIndex = { meshIndex = it },
+                                gravityIndex = selectedGravity,
+                                onGravityIndex = { gravityIndex = it },
+                                drawingPath = drawingPath,
+                                onDrawingPath = { drawingPath = it },
+                                onPickMapImage = {
+                                    mapPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                },
+                            )
+                            StudioTab.Colors -> ColorsPanel(vm, spec, level, selectedStop) { stopIndex = it }
+                            StudioTab.Shape -> ShapePanel(vm, spec, level)
+                            StudioTab.Effects -> EffectsPanel(vm, level, section, selectedLight) { lightIndex = it }
+                            StudioTab.Evolve -> EvolvePanel(vm, spec, level)
+                            StudioTab.Lab -> LabPanel(vm, spec)
+                            StudioTab.Animate -> AnimatePanel(vm, level, section)
+                            StudioTab.Layers -> LayersPanel(vm)
+                            StudioTab.History -> HistoryPanel(vm)
+                            StudioTab.Project -> ProjectPanel(
+                                vm = vm,
+                                section = section,
+                                exportSize = exportSize,
+                                onExportSize = { exportSize = it },
+                                onSave = { saveLauncher.launch("gradient_project.json") },
+                                onOpen = { openLauncher.launch(arrayOf("*/*")) },
+                                onExport = { exportLauncher.launch("gradient.png") },
+                                animSize = animSize,
+                                onAnimSize = { animSize = it },
+                                animLoops = animLoops,
+                                onAnimLoops = { animLoops = it },
+                                onExportGif = { gifLauncher.launch("gradient.gif") },
+                                onExportMp4 = { mp4Launcher.launch("gradient.mp4") },
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(Modifier.size(8.dp))
+            MainStrip(tabs, activeTab, panelOpen, spec.type) { picked ->
+                if (picked == activeTab) {
+                    panelOpen = !panelOpen
+                } else {
+                    tab = picked
+                    sub = 0
+                    panelOpen = true
+                }
+            }
         }
     }
 }
@@ -306,26 +358,44 @@ fun GradientStudioScreen(onBack: () -> Unit, vm: GradientViewModel = viewModel()
 // ---------------------------------------------------------------- chrome
 
 @Composable
-private fun StudioTopBar(vm: GradientViewModel, onBack: () -> Unit) {
+private fun StudioTopBar(
+    vm: GradientViewModel,
+    level: StudioLevel,
+    onLevel: (StudioLevel) -> Unit,
+    onExport: () -> Unit,
+    onBack: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp),
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp), colors = studioIconColors()) {
+        IconButton(onClick = onBack, modifier = Modifier.size(44.dp), colors = studioIconColors()) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back), Modifier.size(24.dp))
         }
-        Text(
-            stringResource(R.string.studio_title),
-            color = EditorColors.TextPrimary,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-        )
-        IconButton(onClick = vm::undo, enabled = vm.canUndo, modifier = Modifier.size(48.dp), colors = studioIconColors()) {
+        Spacer(Modifier.weight(1f))
+        Box {
+            StudioChip(stringResource(level.label), true, { menuOpen = true })
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                StudioLevel.entries.forEach {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(it.label)) },
+                        onClick = {
+                            onLevel(it)
+                            menuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+        IconButton(onClick = vm::undo, enabled = vm.canUndo, modifier = Modifier.size(44.dp), colors = studioIconColors()) {
             Icon(painterResource(R.drawable.ic_undo), stringResource(R.string.undo), Modifier.size(24.dp))
         }
-        IconButton(onClick = vm::redo, enabled = vm.canRedo, modifier = Modifier.size(48.dp), colors = studioIconColors()) {
+        IconButton(onClick = vm::redo, enabled = vm.canRedo, modifier = Modifier.size(44.dp), colors = studioIconColors()) {
             Icon(painterResource(R.drawable.ic_redo), stringResource(R.string.redo), Modifier.size(24.dp))
+        }
+        IconButton(onClick = onExport, modifier = Modifier.size(44.dp), colors = studioIconColors()) {
+            Icon(painterResource(R.drawable.ic_download), stringResource(R.string.top_export), Modifier.size(24.dp))
         }
     }
 }
@@ -336,29 +406,77 @@ private fun studioIconColors() = IconButtonDefaults.iconButtonColors(
     disabledContentColor = EditorColors.TextSecondary.copy(alpha = 0.55f),
 )
 
+private fun tabIcon(tab: StudioTab): Int = when (tab) {
+    StudioTab.Style -> R.drawable.ic_tab_style
+    StudioTab.Photo -> R.drawable.ic_image
+    StudioTab.Source -> R.drawable.ic_tab_source
+    StudioTab.Colors -> R.drawable.ic_tab_colors
+    StudioTab.Shape -> R.drawable.ic_tab_shape
+    StudioTab.Effects -> R.drawable.ic_tab_effects
+    StudioTab.Evolve -> R.drawable.ic_tab_evolve
+    StudioTab.Lab -> R.drawable.ic_tab_lab
+    StudioTab.Animate -> R.drawable.ic_tab_animate
+    StudioTab.Layers -> R.drawable.ic_tab_layers
+    StudioTab.History -> R.drawable.ic_tab_history
+    StudioTab.Project -> R.drawable.ic_tab_project
+}
+
+/** Sub-sections of a tab, shown as a second strip above the main one. Empty when the tab has just one. */
+private fun subLabels(tab: StudioTab, spec: GradientSpec): List<Int> = when (tab) {
+    StudioTab.Style -> if (spec.usesStops) listOf(R.string.style_sub_palettes, R.string.style_sub_types) else emptyList()
+    StudioTab.Effects -> listOf(R.string.effects_texture, R.string.effects_lighting)
+    StudioTab.Animate -> listOf(R.string.anim_motion, R.string.anim_morph, R.string.anim_timing)
+    StudioTab.Project -> listOf(R.string.project_sub_file, R.string.project_sub_image, R.string.project_sub_animation)
+    else -> emptyList()
+}
+
+/** The main strip: one icon button per tool, scrolling sideways. Tapping the open one hides its panel. */
 @Composable
-private fun LevelRow(level: StudioLevel, onSelect: (StudioLevel) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+private fun MainStrip(tabs: List<StudioTab>, active: StudioTab, open: Boolean, type: GradientType, onSelect: (StudioTab) -> Unit) {
+    LazyRow(
+        Modifier.fillMaxWidth().background(EditorColors.Surface),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        StudioLevel.entries.forEach {
-            StudioChip(stringResource(it.label), it == level, { onSelect(it) }, Modifier.weight(1f))
+        itemsIndexed(tabs) { _, t ->
+            val selected = open && t == active
+            val label = stringResource(if (t == StudioTab.Source) sourceTabLabel(type) else t.label)
+            Column(
+                Modifier
+                    .width(68.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (selected) EditorColors.AccentContainer else Color.Transparent)
+                    .clickable(role = Role.Tab) { onSelect(t) }
+                    .padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    painterResource(tabIcon(t)),
+                    contentDescription = null,
+                    tint = if (selected) EditorColors.Accent else EditorColors.TextSecondary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    label,
+                    color = if (selected) EditorColors.TextPrimary else EditorColors.TextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun TabRow(tabs: List<StudioTab>, active: StudioTab, type: GradientType, onSelect: (StudioTab) -> Unit) {
+private fun SubStrip(labels: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
     LazyRow(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp),
+        Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        itemsIndexed(tabs) { _, t ->
-            val label = if (t == StudioTab.Source) sourceTabLabel(type) else t.label
-            StudioChip(stringResource(label), t == active, { onSelect(t) })
-        }
+        itemsIndexed(labels) { i, l -> StudioChip(stringResource(l), i == selected, { onSelect(i) }) }
     }
 }
 
@@ -371,6 +489,8 @@ private fun PreviewArea(
     tab: StudioTab,
     gravityIndex: Int,
     lightIndex: Int,
+    meshIndex: Int,
+    onPickMesh: (Int) -> Unit,
     showHint: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -383,11 +503,11 @@ private fun PreviewArea(
         Box(Modifier.padding(10.dp).fillMaxSize(), contentAlignment = Alignment.Center) {
             Box(
                 Modifier
-                    .aspectRatio(project.width.toFloat() / project.height.toFloat())
+                    .aspectRatio(vm.previewAspect)
                     .clip(RoundedCornerShape(6.dp))
                     .checkerboard()
                     .border(1.dp, EditorColors.Border, RoundedCornerShape(6.dp))
-                    .pointerInput(mode, gravityIndex, lightIndex) {
+                    .pointerInput(mode, gravityIndex, lightIndex, meshIndex) {
                         when (mode) {
                             // One finger moves the gradient's center; two fingers scale and rotate it.
                             PreviewMode.MoveCenter -> detectTransformGestures { _, pan, zoom, rotation ->
@@ -412,6 +532,14 @@ private fun PreviewArea(
                                 },
                             )
 
+                            // Tap near a node of the mesh to select it (the grid itself is fixed, its colors are edited).
+                            PreviewMode.PickMeshNode -> detectTapGestures { o ->
+                                val mesh = vm.project.selected.spec.mesh
+                                val col = Math.round(o.x / size.width * (mesh.cols - 1)).coerceIn(0, mesh.cols - 1)
+                                val row = Math.round(o.y / size.height * (mesh.rows - 1)).coerceIn(0, mesh.rows - 1)
+                                onPickMesh(row * mesh.cols + col)
+                            }
+
                             PreviewMode.None -> Unit
                         }
                     },
@@ -435,6 +563,14 @@ private fun PreviewArea(
                     }
                     when {
                         mode == PreviewMode.MoveCenter -> marker(s.centerX, s.centerY, 9.dp.toPx(), null, true)
+
+                        tab == StudioTab.Source && s.type == GradientType.Mesh -> {
+                            val m = s.mesh
+                            for (r in 0 until m.rows) for (c in 0 until m.cols) {
+                                val i = r * m.cols + c
+                                marker(c / (m.cols - 1f), r / (m.rows - 1f), 8.dp.toPx(), Color(m.colors[i] or (0xFF shl 24)), i == meshIndex)
+                            }
+                        }
 
                         tab == StudioTab.Source && s.type == GradientType.Gravity ->
                             s.gravity.points.forEachIndexed { i, pt ->
@@ -491,18 +627,22 @@ private fun Modifier.checkerboard(): Modifier = drawBehind {
 // ---------------------------------------------------------------- style and colors
 
 @Composable
-private fun StylePanel(vm: GradientViewModel, spec: GradientSpec, level: StudioLevel, onPicked: (GradientType) -> Unit) {
-    // Beginners get the five classic ramps; the content-driven types appear from the Creative level.
-    val types = GradientType.entries.filter { level != StudioLevel.Easy || it.isBasic }
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        itemsIndexed(types) { _, type ->
-            StudioChip(stringResource(typeLabel(type)), type == spec.type, {
-                vm.setType(type)
-                onPicked(type)
-            })
+private fun StylePanel(vm: GradientViewModel, spec: GradientSpec, level: StudioLevel, section: Int, onPicked: (GradientType) -> Unit) {
+    // With color stops the first section is the ready-made palettes (what beginners want); the second is the type.
+    val showTypes = !spec.usesStops || section == 1
+    if (showTypes) {
+        // Beginners get the five classic ramps; the content-driven types appear from the Creative level.
+        val types = GradientType.entries.filter { level != StudioLevel.Easy || it.isBasic }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(types) { _, type ->
+                StudioChip(stringResource(typeLabel(type)), type == spec.type, {
+                    vm.setType(type)
+                    onPicked(type)
+                })
+            }
         }
     }
-    if (spec.usesStops) {
+    if (spec.usesStops && section == 0) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(GradientPresets.palettes) { index, colors ->
                 val desc = stringResource(R.string.preset_n, index + 1)
@@ -518,16 +658,22 @@ private fun StylePanel(vm: GradientViewModel, spec: GradientSpec, level: StudioL
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        StudioChip(stringResource(R.string.random_palette), false, {
-            when (spec.type) {
-                GradientType.Mesh -> vm.randomMesh()
-                GradientType.Gravity -> vm.randomGravity()
-                else -> vm.randomPalette()
+    if (section == 0 && (vm.project.texture.isActive || vm.project.lighting.lights.isNotEmpty() || vm.project.lighting.vignette > 0f)) {
+        Hint(R.string.effects_active_note)
+        StudioChip(stringResource(R.string.effects_reset), false, vm::resetEffects)
+    }
+    if (section == 0) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StudioChip(stringResource(R.string.random_palette), false, {
+                when (spec.type) {
+                    GradientType.Mesh -> vm.randomMesh()
+                    GradientType.Gravity -> vm.randomGravity()
+                    else -> vm.randomPalette()
+                }
+            })
+            if (level != StudioLevel.Easy && spec.usesStops) {
+                StudioChip(stringResource(R.string.reverse_colors), false, vm::reverseStops)
             }
-        })
-        if (level != StudioLevel.Easy && spec.usesStops) {
-            StudioChip(stringResource(R.string.reverse_colors), false, vm::reverseStops)
         }
     }
 }
@@ -562,6 +708,16 @@ private fun ColorsPanel(
             valueText = String.format("%.3f", stops[selectedStop].position),
             onChange = { vm.setStopPosition(selectedStop, it) },
         )
+    }
+    if (level == StudioLevel.Pro) {
+        // Surgery: tiny steps and even spacing for exact control.
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { StudioChip("−0.01", false, { vm.nudgeStop(selectedStop, -0.01f) }) }
+            item { StudioChip("−0.001", false, { vm.nudgeStop(selectedStop, -0.001f) }) }
+            item { StudioChip("+0.001", false, { vm.nudgeStop(selectedStop, 0.001f) }) }
+            item { StudioChip("+0.01", false, { vm.nudgeStop(selectedStop, 0.01f) }) }
+            item { StudioChip(stringResource(R.string.stop_distribute), false, vm::distributeStops) }
+        }
     }
     if (level != StudioLevel.Easy) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -755,13 +911,13 @@ private fun MapPanel(vm: GradientViewModel, spec: GradientSpec, onPick: () -> Un
 // ---------------------------------------------------------------- effects
 
 @Composable
-private fun EffectsPanel(vm: GradientViewModel, level: StudioLevel, selectedLight: Int, onSelectLight: (Int) -> Unit) {
+private fun EffectsPanel(vm: GradientViewModel, level: StudioLevel, section: Int, selectedLight: Int, onSelectLight: (Int) -> Unit) {
     val project = vm.project
     val tex = project.texture
     val lighting = project.lighting
     val pro = level == StudioLevel.Pro
 
-    Text(stringResource(R.string.effects_texture), color = EditorColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    if (section == 0) {
     LabeledSlider(R.string.texture_grain, tex.grain, 0f..1f, "${(tex.grain * 100).toInt()}%", { v -> vm.editTexture { it.copy(grain = v) } })
     if (pro) {
         LabeledSlider(R.string.texture_grain_size, tex.grainSize, 1f..8f, String.format("%.1f", tex.grainSize), { v -> vm.editTexture { it.copy(grainSize = v) } })
@@ -778,7 +934,8 @@ private fun EffectsPanel(vm: GradientViewModel, level: StudioLevel, selectedLigh
         }
     }
 
-    Text(stringResource(R.string.effects_lighting), color = EditorColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+    if (section == 1) {
     Text(stringResource(R.string.light_hint), color = EditorColors.TextSecondary, fontSize = 13.sp)
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(lighting.lights) { i, light ->
@@ -812,6 +969,7 @@ private fun EffectsPanel(vm: GradientViewModel, level: StudioLevel, selectedLigh
         })
     }
     LabeledSlider(R.string.light_vignette, lighting.vignette, 0f..1f, "${(lighting.vignette * 100).toInt()}%", vm::setVignette)
+    }
 }
 
 // ---------------------------------------------------------------- layers, history, project
@@ -920,6 +1078,7 @@ private fun HistoryPanel(vm: GradientViewModel) {
 @Composable
 private fun ProjectPanel(
     vm: GradientViewModel,
+    section: Int,
     exportSize: Int,
     onExportSize: (Int) -> Unit,
     onSave: () -> Unit,
@@ -933,19 +1092,25 @@ private fun ProjectPanel(
     onExportMp4: () -> Unit,
 ) {
     val busy = vm.busy
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        StudioChip(stringResource(R.string.project_new), false, vm::newProject, enabled = !busy)
-        StudioChip(stringResource(R.string.project_open), false, onOpen, enabled = !busy)
-        StudioChip(stringResource(R.string.project_save), false, onSave, enabled = !busy)
-    }
-    Text(stringResource(R.string.project_hint), color = EditorColors.TextSecondary, fontSize = 13.sp)
-    Text(stringResource(R.string.export_size_label), color = EditorColors.TextPrimary, fontSize = 14.sp)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(1080, 2048, 3072).forEach { size ->
-            StudioChip("$size", size == exportSize, { onExportSize(size) })
+    when (section) {
+        0 -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StudioChip(stringResource(R.string.project_new), false, vm::newProject, enabled = !busy)
+                StudioChip(stringResource(R.string.project_open), false, onOpen, enabled = !busy)
+                StudioChip(stringResource(R.string.project_save), false, onSave, enabled = !busy)
+            }
+            Text(stringResource(R.string.project_hint), color = EditorColors.TextSecondary, fontSize = 13.sp)
         }
+        1 -> {
+            Text(stringResource(R.string.export_size_label), color = EditorColors.TextPrimary, fontSize = 14.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(1080, 2048, 3072).forEach { size ->
+                    StudioChip("$size", size == exportSize, { onExportSize(size) })
+                }
+            }
+            StudioChip(stringResource(R.string.export_png), false, onExport, enabled = !busy)
+        }
+        else -> AnimationExportSection(vm, animSize, onAnimSize, animLoops, onAnimLoops, onExportGif, onExportMp4)
     }
-    StudioChip(stringResource(R.string.export_png), false, onExport, enabled = !busy)
-    AnimationExportSection(vm, animSize, onAnimSize, animLoops, onAnimLoops, onExportGif, onExportMp4)
     if (busy && vm.exportProgress == null) Text(stringResource(R.string.working), color = EditorColors.TextSecondary, fontSize = 13.sp)
 }
