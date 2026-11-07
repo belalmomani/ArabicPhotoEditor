@@ -122,7 +122,7 @@ data class EditorState(
 }
 
 @Composable
-fun EditorScreen(vm: EditorViewModel = viewModel(), onOpenGradients: () -> Unit = {}) {
+fun EditorScreen(vm: EditorViewModel = viewModel(), onOpenGradients: () -> Unit = {}, onOpenCleanup: () -> Unit = {}) {
     var selectedTool by rememberSaveable { mutableStateOf<EditorTool?>(null) }
     var panelExpanded by rememberSaveable { mutableStateOf(true) }
     var brushSize by rememberSaveable { mutableFloatStateOf(0.4f) }
@@ -153,6 +153,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel(), onOpenGradients: () -> Unit 
 
     EditorContent(
         onOpenGradients = onOpenGradients,
+        onOpenCleanup = onOpenCleanup,
         onStroke = vm::removeBlemish,
         onUndo = vm::undo,
         onRedo = vm::redo,
@@ -200,6 +201,7 @@ private fun EditorContent(
     onRedo: () -> Unit = {},
     onStroke: (List<Pair<Float, Float>>, Float) -> Unit = { _, _ -> },
     onOpenGradients: () -> Unit = {},
+    onOpenCleanup: () -> Unit = {},
 ) {
     // Brush drawing is only offered while the blemish tool is active and the visible image is the editable one.
     val brushEnabled = selectedTool == EditorTool.RemoveBlemishes &&
@@ -220,6 +222,8 @@ private fun EditorContent(
                 onRedo = onRedo,
                 onSave = onSave,
                 onOpenGradients = onOpenGradients,
+                onOpenCleanup = onOpenCleanup,
+                cleanupEnabled = state.image != null && !state.processing,
             )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 600.dp && maxWidth > maxHeight
@@ -268,6 +272,8 @@ private fun TopBar(
     onRedo: () -> Unit,
     onSave: () -> Unit,
     onOpenGradients: () -> Unit,
+    onOpenCleanup: () -> Unit,
+    cleanupEnabled: Boolean,
 ) {
     Row(
         Modifier
@@ -290,6 +296,7 @@ private fun TopBar(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
         )
+        TopBarIcon(R.drawable.ic_eraser, null, stringResource(R.string.cleanup_open), enabled = cleanupEnabled, onClick = onOpenCleanup)
         TopBarIcon(R.drawable.ic_gradient, null, stringResource(R.string.open_gradients), enabled = true, onClick = onOpenGradients)
         // Undo / redo act on the background-removal step; save exports its result as PNG.
         TopBarIcon(R.drawable.ic_undo, null, stringResource(R.string.undo), enabled = undoEnabled, onClick = onUndo)

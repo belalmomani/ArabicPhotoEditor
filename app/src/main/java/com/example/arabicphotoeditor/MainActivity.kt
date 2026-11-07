@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.arabicphotoeditor.scenecleanup.SceneCleanupScreen
 import com.example.arabicphotoeditor.ui.editor.EditorScreen
 import com.example.arabicphotoeditor.ui.editor.EditorViewModel
 import com.example.arabicphotoeditor.ui.gradient.GradientStudioScreen
@@ -23,7 +24,18 @@ class MainActivity : ComponentActivity() {
             ArabicPhotoEditorTheme {
                 val editorVm: EditorViewModel = viewModel()
                 var showGradients by rememberSaveable { mutableStateOf(false) }
-                if (showGradients) {
+                var showCleanup by rememberSaveable { mutableStateOf(false) }
+                if (showCleanup) {
+                    BackHandler { showCleanup = false }
+                    SceneCleanupScreen(
+                        onBack = { showCleanup = false },
+                        photo = editorVm.result ?: editorVm.original,
+                        onApply = { bitmap ->
+                            editorVm.applyToolResult(bitmap)
+                            showCleanup = false
+                        },
+                    )
+                } else if (showGradients) {
                     BackHandler { showGradients = false }
                     GradientStudioScreen(
                         onBack = { showGradients = false },
@@ -35,7 +47,7 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 } else {
-                    EditorScreen(vm = editorVm, onOpenGradients = { showGradients = true })
+                    EditorScreen(vm = editorVm, onOpenGradients = { showGradients = true }, onOpenCleanup = { showCleanup = true })
                 }
             }
         }

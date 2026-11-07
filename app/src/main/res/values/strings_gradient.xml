@@ -284,4 +284,24 @@
     <string name="effects_active_note">توجد تأثيرات مفعّلة (حبيبات أو ضباب أو إضاءة) قد تغيّر مظهر المعاينة.</string>
     <string name="effects_reset">إعادة ضبط التأثيرات</string>
     <string name="history_reset_effects">إعادة ضبط التأثيرات</string>
+
+    <!-- Scene cleanup -->
+    <string name="cleanup_title">التنظيف الذكي للمشهد</string>
+    <string name="cleanup_open">التنظيف الذكي للمشهد</string>
+    <string name="cleanup_apply">تم</string>
+    <string name="cleanup_no_photo">افتح صورة من المحرر أولاً ثم ارجع إلى هذه الأداة.</string>
+    <string name="cleanup_hint_empty">ظلّل بإصبعك ما تريد إزالته. اقرص بإصبعين للتكبير والتحريك.</string>
+    <string name="cleanup_hint_ready">اضغط «إزالة»، أو أكمل التظليل. الممحاة تستبعد أجزاء من التحديد.</string>
+    <string name="cleanup_size">الحجم</string>
+    <string name="cleanup_remove">إزالة</string>
+    <string name="cleanup_removing">جارٍ إزالة العنصر وإعادة بناء المكان…</string>
+    <string name="cleanup_cancel">إلغاء</string>
+    <string name="cleanup_basic_note">المحرك الحالي مناسب للعناصر الصغيرة. العناصر الكبيرة قد تظهر مطموسة، والمحرك المتقدم قادم في مرحلة لاحقة.</string>
+    <string name="cleanup_failed">تعذّرت الإزالة</string>
+    <string name="cleanup_memory">الصورة كبيرة والذاكرة لا تكفي. جرّب صورة أصغر.</string>
+    <string name="tool_brush">فرشاة</string>
+    <string name="tool_eraser">استبعاد</string>
+    <string name="tool_hand">تحريك</string>
+    <string name="tool_clear">مسح التحديد</string>
+    <string name="tool_compare">قبل/بعد</string>
 </resources>

@@ -188,11 +188,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ gradient studio
 
-    /** Replaces the picture with [bitmap] produced by the gradient studio (undoable). */
-    fun applyGradientResult(bitmap: Bitmap) {
+    /** Replaces the picture with [bitmap] produced by a tool screen such as the gradient studio (undoable). */
+    fun applyToolResult(bitmap: Bitmap) {
         if (busy) return
         if (result != null) commit(original, bitmap) else commit(bitmap, null)
     }
+
+    fun applyGradientResult(bitmap: Bitmap) = applyToolResult(bitmap)
 
     // ------------------------------------------------------------ save
 
