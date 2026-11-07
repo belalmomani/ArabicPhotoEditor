@@ -36,8 +36,10 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /** Brush diameter on screen, in dp. Converted to image pixels by the view using its current zoom. */
-    var brushDp by mutableFloatStateOf(36f)
-        private set
+    private val _brushDp = mutableFloatStateOf(36f)
+    var brushDp: Float
+        get() = _brushDp.value
+        set(value) { _brushDp.value = value.coerceIn(8f, 120f) }
 
     var processing by mutableStateOf(false)
         private set
@@ -86,10 +88,6 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectTool(t: CleanupTool) {
         tool = t
-    }
-
-    fun setBrushDp(value: Float) {
-        brushDp = value.coerceIn(8f, 120f)
     }
 
     // ------------------------------------------------------------ selection
