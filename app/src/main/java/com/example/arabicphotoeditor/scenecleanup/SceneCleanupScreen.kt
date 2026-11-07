@@ -354,7 +354,7 @@ private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> U
                 Text(stringResource(R.string.cleanup_size), color = EditorColors.TextSecondary, fontSize = 13.sp)
                 Slider(
                     value = vm.brushDp,
-                    onValueChange = vm::setBrushDp,
+                    onValueChange = { vm.brushDp = it },
                     valueRange = 8f..120f,
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(thumbColor = EditorColors.Accent, activeTrackColor = EditorColors.Accent),
