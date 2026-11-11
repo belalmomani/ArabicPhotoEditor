@@ -106,6 +106,7 @@ class SelectionMask(val width: Int, val height: Int, val data: ByteArray = ByteA
 
     companion object {
         const val MAX_SIDE = 1024
+        const val SELECTED: Byte = -1  // 0xFF = 255 as byte
 
         /** A new empty mask for a photo of the given size, scaled to at most [MAX_SIDE]. */
         fun forPhoto(photoW: Int, photoH: Int): SelectionMask {

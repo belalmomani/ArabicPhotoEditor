@@ -17,6 +17,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 
+/** Detection state shown in the UI. */
+sealed class DetectionState {
+    object Idle    : DetectionState()
+    object Running : DetectionState()
+    data class Done(val regions: List<DetectedRegion>) : DetectionState()
+    object NoRegions : DetectionState()  // model ran but nothing found
+}
+
 enum class CleanupTool { Brush, Eraser, Hand }
 
 /**
@@ -52,6 +60,14 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
     var revision by mutableIntStateOf(0)
         private set
 
+    /** Number of disconnected regions in the current selection (shown in the Remove button label). */
+    var regionCount by mutableIntStateOf(0)
+        private set
+
+    /** Index of the region currently being processed (1-based, shown in progress label). */
+    var currentRegion by mutableIntStateOf(0)
+        private set
+
     private var job: Job? = null
     @Volatile
     private var cancelRequested = false
@@ -68,7 +84,12 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
     /** True when at least one removal has been applied (so there is something to hand back or compare). */
     val changed: Boolean get() = photo != null && photo !== source
 
-    private val engine: RemovalEngine = BasicRemovalEngine
+    private val engine: RemovalEngine = AutoRemovalEngine
+    private var detector: SaliencyDetector? = null
+
+    /** Auto-detection state. UI shows an overlay of bounding boxes when Done. */
+    var detectionState by mutableStateOf<DetectionState>(DetectionState.Idle)
+        private set
 
     // ------------------------------------------------------------ setup
 
@@ -79,11 +100,51 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
         source = bitmap
         timeline.clear()
         cursor = -1
+        detectionState = DetectionState.Idle
         if (bitmap != null) {
             timeline.add(State(bitmap, SelectionMask.forPhoto(bitmap.width, bitmap.height)))
             cursor = 0
         }
         revision++
+    }
+
+    /**
+     * Runs the saliency model on the current photo and stores detected regions.
+     * The user then taps a region to add it to the selection. Nothing is auto-removed.
+     */
+    fun detectObjects() {
+        val photo = photo ?: return
+        if (processing || detectionState == DetectionState.Running) return
+        detectionState = DetectionState.Running
+        viewModelScope.launch {
+            val regions = withContext(Dispatchers.Default) {
+                val det = detector ?: SaliencyDetector(getApplication()).also { detector = it }
+                det.detect(photo)
+            }
+            detectionState = if (regions.isEmpty()) DetectionState.NoRegions
+                             else DetectionState.Done(regions)
+        }
+    }
+
+    /** User tapped at normalized photo coordinates (nx, ny); add the region that contains the point. */
+    fun tapRegion(nx: Float, ny: Float) {
+        val state = detectionState
+        if (state !is DetectionState.Done) return
+        val region = state.regions.firstOrNull { it.contains(nx, ny) } ?: return
+        val current = timeline.getOrNull(cursor) ?: return
+        if (processing) return
+        // Merge this region's mask into the current selection.
+        val next = current.mask.copy()
+        val regionSel = region.toSelectionMask(next.width, next.height)
+        for (i in next.data.indices) {
+            if (regionSel.data[i] != 0.toByte()) next.data[i] = SelectionMask.SELECTED
+        }
+        push(current.photo, next)
+    }
+
+    /** Dismiss the detection overlay without selecting anything. */
+    fun dismissDetection() {
+        detectionState = DetectionState.Idle
     }
 
     fun selectTool(t: CleanupTool) {
@@ -97,7 +158,14 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
         timeline.add(State(photo, mask))
         while (timeline.size > MAX_STATES) timeline.removeAt(0)
         cursor = timeline.lastIndex
+        regionCount = countRegions(mask)
         revision++
+    }
+
+    private fun countRegions(mask: SelectionMask): Int {
+        if (mask.isEmpty()) return 0
+        val full = mask.toFullResolution(mask.width, mask.height, 0)
+        return RegionLabeler.label(full, mask.width, mask.height).size
     }
 
     /**
@@ -134,25 +202,91 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ removal
 
+    /**
+     * Removes all selected regions one by one:
+     * 1. Labels disconnected regions in the current mask.
+     * 2. Sorts them largest-first (more source pixels available for later fills).
+     * 3. For each region: grow mask edges → engine.remove → ColourMatcher.correct → push snapshot.
+     * 4. Each region is a separate timeline step, so the user can undo any single removal.
+     */
     fun remove() {
         val current = timeline.getOrNull(cursor) ?: return
         if (processing || current.mask.isEmpty()) return
         processing = true
         progress = 0f
         cancelRequested = false
+        currentRegion = 0
+
         job = viewModelScope.launch {
             try {
-                val result = withContext(Dispatchers.Default) {
-                    val photo = current.photo
-                    // Grow the mask a little: the object's soft edge, halo and contact shadow are rarely selected exactly.
-                    val grow = max(2, max(photo.width, photo.height) / 400)
-                    val full = current.mask.toFullResolution(photo.width, photo.height, grow)
-                    engine.remove(photo, full, { progress = it }, { cancelRequested })
+                val selW = current.mask.width
+                val selH = current.mask.height
+
+                // Label regions on Default dispatcher (CPU work).
+                val (regions, maskBool) = withContext(Dispatchers.Default) {
+                    val mb = BooleanArray(selW * selH) { current.mask.data[it] != 0.toByte() }
+                    RegionLabeler.label(mb, selW, selH) to mb
                 }
-                if (cancelRequested) {
-                    // Cancelled: keep the previous state untouched.
-                } else {
-                    push(result, SelectionMask(current.mask.width, current.mask.height))
+
+                if (regions.isEmpty()) {
+                    processing = false
+                    return@launch
+                }
+
+                val total = regions.size
+                var workingPhoto = current.photo
+                val grow = max(2, max(workingPhoto.width, workingPhoto.height) / 400)
+
+                for ((idx, region) in regions.withIndex()) {
+                    if (cancelRequested) break
+
+                    // Update UI counters on Main.
+                    currentRegion = idx + 1
+                    progress = idx.toFloat() / total
+
+                    // Heavy work on Default.
+                    val (filled, fullMask) = withContext(Dispatchers.Default) {
+                        // Build full-res mask for this region only.
+                        val regionBytes = ByteArray(selW * selH).also { dst ->
+                            for (i in region.indices) dst[i] = SelectionMask.SELECTED
+                        }
+                        val regionSelMask = SelectionMask(selW, selH, regionBytes)
+                        val fm = regionSelMask.toFullResolution(workingPhoto.width, workingPhoto.height, grow)
+
+                        val f = engine.remove(
+                            workingPhoto, fm,
+                            progress = { p -> progress = (idx + p) / total },
+                            cancelled = { cancelRequested },
+                        )
+                        f to fm
+                    }
+
+                    if (cancelRequested) break
+
+                    // Colour correction on Default.
+                    val corrected = withContext(Dispatchers.Default) {
+                        ColourMatcher.correct(filled, fullMask)
+                    }
+
+                    workingPhoto = corrected
+
+                    // Update remaining selection (remove consumed region from maskBool).
+                    for (i in region.indices) maskBool[i] = false
+                    val remainingBytes = ByteArray(selW * selH).also { dst ->
+                        for (i in dst.indices) if (maskBool[i]) dst[i] = SelectionMask.SELECTED
+                    }
+                    val remainingMask = SelectionMask(selW, selH, remainingBytes)
+
+                    // Push snapshot on Main so compose reads it.
+                    push(workingPhoto, remainingMask)
+                }
+
+                // Ensure final state has an empty selection mask.
+                if (!cancelRequested) {
+                    val cur = timeline.getOrNull(cursor)
+                    if (cur != null && !cur.mask.isEmpty()) {
+                        push(cur.photo, SelectionMask(cur.mask.width, cur.mask.height))
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -162,6 +296,8 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
                 message = R.string.cleanup_failed
             }
             processing = false
+            currentRegion = 0
+            progress = 0f
         }
     }
 
@@ -171,6 +307,12 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     fun messageShown() {
         message = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        detector?.close()
+        detector = null
     }
 
     private companion object {

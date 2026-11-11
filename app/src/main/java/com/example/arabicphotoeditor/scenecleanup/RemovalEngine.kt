@@ -20,9 +20,8 @@ interface RemovalEngine {
 }
 
 /**
- * The first engine: the existing local fill (onion-peel + diffusion). It copies nothing from elsewhere in the
- * photo, so it is good for small objects on smooth or softly textured backgrounds and it smears large areas.
- * It makes no semantic guess about what was behind the object.
+ * The basic engine: the existing local fill (onion-peel + diffusion). Good for small objects
+ * on smooth backgrounds. Smears large or complex areas.
  */
 object BasicRemovalEngine : RemovalEngine {
     override val id = "basic"
@@ -32,5 +31,25 @@ object BasicRemovalEngine : RemovalEngine {
         val out = BlemishInpainter.inpaint(source, mask)
         progress(1f)
         return out
+    }
+}
+
+/**
+ * Picks the best engine for the given mask automatically:
+ * - Small selection (< [BASIC_THRESHOLD] of the image): BasicRemovalEngine (fast, no artefacts on smooth areas).
+ * - Larger selection: PatchMatchEngine (exemplar-based, handles textures and complex backgrounds).
+ *
+ * This keeps the user experience simple: they never need to choose.
+ */
+object AutoRemovalEngine : RemovalEngine {
+    override val id = "auto"
+
+    /** Mask-coverage fraction above which we switch to PatchMatch. */
+    private const val BASIC_THRESHOLD = 0.015f   // 1.5 % of the image
+
+    override fun remove(source: Bitmap, mask: BooleanArray, progress: (Float) -> Unit, cancelled: () -> Boolean): Bitmap {
+        val coverage = mask.count { it }.toFloat() / mask.size
+        val engine = if (coverage <= BASIC_THRESHOLD) BasicRemovalEngine else PatchMatchEngine
+        return engine.remove(source, mask, progress, cancelled)
     }
 }

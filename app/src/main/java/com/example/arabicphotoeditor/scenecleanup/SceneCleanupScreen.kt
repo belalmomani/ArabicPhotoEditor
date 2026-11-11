@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -75,7 +76,9 @@ import com.example.arabicphotoeditor.ui.theme.EditorColors
 import kotlin.math.max
 import kotlin.math.min
 
-private val SelectionColor = 0x99FF3B30.toInt()
+private val SelectionColor  = 0x99FF3B30.toInt()
+private val DetectBoxColor  = Color(0xBBFFCC00)   // amber outline for detected regions
+private val DetectFillColor = Color(0x33FFCC00)   // translucent fill
 
 /**
  * Scene Cleanup: the user paints over what should disappear, the engine rebuilds the area. One finger paints (or
@@ -103,6 +106,8 @@ fun SceneCleanupScreen(
     val revision = vm.revision // read so the screen follows the timeline
     val shown = if (showBefore && vm.changed) vm.original else vm.photo
     val overlay = remember(revision) { vm.mask?.let { buildOverlay(it) } }
+    val detectionState = vm.detectionState
+    val detectedRegions = (detectionState as? DetectionState.Done)?.regions ?: emptyList()
 
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -124,15 +129,29 @@ fun SceneCleanupScreen(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     )
                 } else {
-                    CleanupCanvas(vm, shown, overlay, showOverlay = !showBefore, modifier = Modifier.fillMaxSize())
-                    val hint = when {
+                    CleanupCanvas(
+                        vm = vm,
+                        bitmap = shown,
+                        overlay = overlay,
+                        showOverlay = !showBefore,
+                        detectedRegions = if (!showBefore) detectedRegions else emptyList(),
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // Status hint
+                    val hint: String? = when {
                         vm.processing -> null
-                        vm.hasSelection -> R.string.cleanup_hint_ready
-                        else -> R.string.cleanup_hint_empty
+                        detectionState == DetectionState.Running ->
+                            stringResource(R.string.cleanup_detecting)
+                        detectionState == DetectionState.NoRegions ->
+                            stringResource(R.string.cleanup_detect_none)
+                        detectedRegions.isNotEmpty() ->
+                            stringResource(R.string.cleanup_detect_tap)
+                        vm.hasSelection -> stringResource(R.string.cleanup_hint_ready)
+                        else -> stringResource(R.string.cleanup_hint_empty)
                     }
                     if (hint != null) {
                         Text(
-                            stringResource(hint),
+                            hint,
                             color = EditorColors.TextPrimary,
                             fontSize = 12.sp,
                             textAlign = TextAlign.Center,
@@ -205,6 +224,7 @@ private fun CleanupCanvas(
     bitmap: Bitmap,
     overlay: Bitmap?,
     showOverlay: Boolean,
+    detectedRegions: List<DetectedRegion> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -291,7 +311,20 @@ private fun CleanupCanvas(
                             }
                         } while (event.changes.any { it.pressed })
 
-                        if (drawing && !multi && pts.isNotEmpty()) vm.commitStroke(pts, radiusFraction, add)
+                        if (drawing && !multi && pts.isNotEmpty()) {
+                            // If detection is active and there is no brush stroke (single tap), try region-tap.
+                            if (pts.size <= 2 && detectedRegions.isNotEmpty()) {
+                                val (tnx, tny) = pts.first()
+                                val region = detectedRegions.firstOrNull { it.contains(tnx, tny) }
+                                if (region != null) {
+                                    vm.tapRegion(tnx, tny)
+                                } else {
+                                    vm.commitStroke(pts, radiusFraction, add)
+                                }
+                            } else {
+                                vm.commitStroke(pts, radiusFraction, add)
+                            }
+                        }
                         live.clear()
                     }
                 },
@@ -322,6 +355,28 @@ private fun CleanupCanvas(
                     )
                 }
                 Canvas(Modifier.fillMaxSize()) {
+                    // Draw detected region boxes.
+                    if (detectedRegions.isNotEmpty()) {
+                        val strokePx = 2.dp.toPx()
+                        for (region in detectedRegions) {
+                            val rx0 = region.left  * size.width
+                            val ry0 = region.top   * size.height
+                            val rx1 = region.right * size.width
+                            val ry1 = region.bottom * size.height
+                            drawRect(
+                                color = DetectFillColor,
+                                topLeft = Offset(rx0, ry0),
+                                size = ComposeSize(rx1 - rx0, ry1 - ry0),
+                            )
+                            drawRect(
+                                color = DetectBoxColor,
+                                topLeft = Offset(rx0, ry0),
+                                size = ComposeSize(rx1 - rx0, ry1 - ry0),
+                                style = Stroke(strokePx),
+                            )
+                        }
+                    }
+                    // Draw live brush stroke.
                     if (live.isNotEmpty()) {
                         val color = if (liveAdd) Color(0x99FF3B30) else Color(0x99FFFFFF)
                         val width = liveRadius * 2f * max(size.width, size.height)
@@ -345,6 +400,10 @@ private fun CleanupCanvas(
 
 @Composable
 private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> Unit) {
+    val detectionState = vm.detectionState
+    val detecting = detectionState == DetectionState.Running
+    val hasRegions = detectionState is DetectionState.Done
+
     Column(
         Modifier.fillMaxWidth().background(EditorColors.Surface).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -369,7 +428,58 @@ private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> U
             ToolButton(R.drawable.ic_tab_history, R.string.tool_clear, false, vm.hasSelection && !vm.processing, Modifier.weight(1f)) { vm.clearSelection() }
             CompareButton(vm.changed, Modifier.weight(1f), onCompare)
         }
+        // Auto-detect row
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Detect button: runs the saliency model
+            val detectEnabled = vm.hasPhoto && !vm.processing && !detecting
+            Box(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (detecting) EditorColors.SurfaceRaised else EditorColors.Surface)
+                    .clickable(enabled = detectEnabled, role = Role.Button) { vm.detectObjects() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (detecting) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = EditorColors.Accent,
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.cleanup_detect),
+                        color = if (detectEnabled) EditorColors.Accent else EditorColors.TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            // Dismiss detection overlay
+            if (hasRegions) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(EditorColors.Surface)
+                        .clickable(role = Role.Button) { vm.dismissDetection() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        stringResource(R.string.cleanup_detect_dismiss),
+                        color = EditorColors.TextSecondary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
         if (vm.processing) {
+            // Progress row: bar + cancel
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LinearProgressIndicator(
                     progress = { vm.progress.coerceIn(0f, 1f) },
@@ -383,9 +493,22 @@ private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> U
                     modifier = Modifier.clickable(role = Role.Button) { vm.cancel() }.padding(8.dp),
                 )
             }
-            Text(stringResource(R.string.cleanup_removing), color = EditorColors.TextSecondary, fontSize = 13.sp)
+            // Show which object is being processed when there are multiple.
+            val cur = vm.currentRegion
+            val total = vm.regionCount
+            val label = if (total > 1 && cur > 0)
+                stringResource(R.string.cleanup_removing_n, cur, total)
+            else
+                stringResource(R.string.cleanup_removing)
+            Text(label, color = EditorColors.TextSecondary, fontSize = 13.sp)
         } else {
             val enabled = vm.hasSelection
+            // Show number of regions in the button label.
+            val n = vm.regionCount
+            val buttonText = when {
+                n > 1 -> stringResource(R.string.cleanup_remove_n, n)
+                else  -> stringResource(R.string.cleanup_remove)
+            }
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -396,7 +519,7 @@ private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> U
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    stringResource(R.string.cleanup_remove),
+                    buttonText,
                     color = if (enabled) Color.White else EditorColors.TextSecondary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
