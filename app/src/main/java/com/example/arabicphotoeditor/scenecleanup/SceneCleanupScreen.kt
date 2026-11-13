@@ -108,6 +108,7 @@ fun SceneCleanupScreen(
     val overlay = remember(revision) { vm.mask?.let { buildOverlay(it) } }
     val detectionState = vm.detectionState
     val detectedRegions = (detectionState as? DetectionState.Done)?.regions ?: emptyList()
+    val qualityReport = vm.qualityReport
 
     Surface(color = EditorColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -164,6 +165,13 @@ fun SceneCleanupScreen(
                         )
                     }
                 }
+            }
+            if (qualityReport != null) {
+                QualityCard(
+                    report = qualityReport,
+                    onRetry = vm::retry,
+                    onDismiss = vm::dismissQuality,
+                )
             }
             CleanupControls(vm, onCompare = { showBefore = it })
         }
@@ -578,5 +586,91 @@ private fun CompareButton(enabled: Boolean, modifier: Modifier, onCompare: (Bool
     ) {
         Icon(painterResource(R.drawable.ic_compare), null, tint = tint, modifier = Modifier.size(24.dp))
         Text(stringResource(R.string.tool_compare), color = tint, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+// ---------------------------------------------------------------- quality card
+
+@Composable
+private fun QualityCard(
+    report: QualityChecker.QualityReport,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val isGood = report.acceptable
+    val borderColor = if (isGood) Color(0xFF34C759) else Color(0xFFFF9500)
+    val titleRes = if (isGood) R.string.quality_good else R.string.quality_warn
+    val titleColor = if (isGood) Color(0xFF34C759) else Color(0xFFFF9500)
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(EditorColors.SurfaceRaised)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(titleRes),
+                color = titleColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                stringResource(R.string.quality_dismiss),
+                color = EditorColors.TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable(role = Role.Button) { onDismiss() }.padding(4.dp),
+            )
+        }
+
+        if (!isGood) {
+            // Show which checks failed.
+            @Composable
+            fun row(label: String, score: Float) {
+                if (score < 0.25f) return
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "• $label",
+                        color = EditorColors.TextSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { score.coerceIn(0f, 1f) },
+                        modifier = Modifier.weight(1f),
+                        color = Color(0xFFFF9500),
+                        trackColor = EditorColors.Surface,
+                    )
+                }
+            }
+            row(stringResource(R.string.quality_seam),  report.colourSeamScore)
+            row(stringResource(R.string.quality_blotch), report.blotchScore)
+            row(stringResource(R.string.quality_repeat), report.repetitionScore)
+            row(stringResource(R.string.quality_edge),   report.edgeResidueScore)
+
+            // Retry button
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(EditorColors.Accent)
+                    .clickable(role = Role.Button, onClick = onRetry),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    stringResource(R.string.quality_retry),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
     }
 }

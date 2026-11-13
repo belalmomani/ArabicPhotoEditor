@@ -91,6 +91,14 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
     var detectionState by mutableStateOf<DetectionState>(DetectionState.Idle)
         private set
 
+    /** Quality report from the last removal, null until a removal completes. */
+    var qualityReport by mutableStateOf<QualityChecker.QualityReport?>(null)
+        private set
+
+    /** Mask saved before the last removal, so retry can re-run on the same selection. */
+    private var lastRemovalMask: SelectionMask? = null
+    private var lastRemovalPhoto: Bitmap? = null
+
     // ------------------------------------------------------------ setup
 
     /** Called by the screen with the editor's current picture; the same bitmap again changes nothing. */
@@ -101,6 +109,9 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
         timeline.clear()
         cursor = -1
         detectionState = DetectionState.Idle
+        qualityReport = null
+        lastRemovalMask = null
+        lastRemovalPhoto = null
         if (bitmap != null) {
             timeline.add(State(bitmap, SelectionMask.forPhoto(bitmap.width, bitmap.height)))
             cursor = 0
@@ -217,6 +228,11 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
         cancelRequested = false
         currentRegion = 0
 
+        // Save the state before removal for retry.
+        lastRemovalMask  = current.mask.copy()
+        lastRemovalPhoto = current.photo
+        qualityReport    = null
+
         job = viewModelScope.launch {
             try {
                 val selW = current.mask.width
@@ -287,6 +303,17 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
                     if (cur != null && !cur.mask.isEmpty()) {
                         push(cur.photo, SelectionMask(cur.mask.width, cur.mask.height))
                     }
+                    // Run quality check on the final result vs original mask.
+                    val finalPhoto = timeline.getOrNull(cursor)?.photo
+                    val origMask   = lastRemovalMask
+                    if (finalPhoto != null && origMask != null) {
+                        val report = withContext(Dispatchers.Default) {
+                            val fullMask = origMask.toFullResolution(
+                                finalPhoto.width, finalPhoto.height, 0)
+                            QualityChecker.check(finalPhoto, fullMask)
+                        }
+                        qualityReport = report
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -304,6 +331,36 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
     fun cancel() {
         cancelRequested = true
     }
+
+    /**
+     * Undoes the last removal and re-runs it, so a different random seed in PatchMatch may produce
+     * a better result. Only available when a quality report exists.
+     */
+    fun retry() {
+        val retryMask  = lastRemovalMask  ?: return
+        val retryPhoto = lastRemovalPhoto ?: return
+        if (processing) return
+        // Undo the removal steps (go back to the state before the removal).
+        // The retry mask records the selection that was used; the photo is the state before.
+        // We push a fresh state with the original photo + selection, then call remove().
+        qualityReport = null
+        while (cursor > 0 && timeline.getOrNull(cursor)?.photo !== retryPhoto) {
+            if (cursor > 0) cursor-- else break
+        }
+        // If we found the original photo in the timeline, truncate the future and re-select.
+        val cur = timeline.getOrNull(cursor)
+        if (cur != null && cur.photo === retryPhoto) {
+            push(retryPhoto, retryMask)
+        } else {
+            // Timeline was trimmed; push fresh.
+            push(retryPhoto, retryMask)
+        }
+        revision++
+        remove()
+    }
+
+    /** Hides the quality report card without retrying. */
+    fun dismissQuality() { qualityReport = null }
 
     fun messageShown() {
         message = null
