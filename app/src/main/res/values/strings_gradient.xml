@@ -314,7 +314,8 @@
     <string name="cleanup_detect_none">لم يُعثر على عناصر بارزة. ظلّل يدوياً.</string>
     <string name="cleanup_detect_dismiss">إخفاء المناطق</string>
     <string name="cleanup_failed">تعذّرت الإزالة</string>
-    <string name="cleanup_memory">الصورة كبيرة والذاكرة لا تكفي. جرّب صورة أصغر.</string>
+    <string name="cleanup_memory">الصورة كبيرة جداً ولم تكفِ الذاكرة. جرّب تصغير الصورة.</string>
+    <string name="cleanup_basic_note_tiled">المحرك يختار تلقائياً: الصور الكبيرة تُعالَج بالتقطيع لحماية الذاكرة.</string>
     <string name="tool_brush">فرشاة</string>
     <string name="tool_eraser">استبعاد</string>
     <string name="tool_hand">تحريك</string>

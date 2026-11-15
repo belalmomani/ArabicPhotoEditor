@@ -37,19 +37,29 @@ object BasicRemovalEngine : RemovalEngine {
 /**
  * Picks the best engine for the given mask automatically:
  * - Small selection (< [BASIC_THRESHOLD] of the image): BasicRemovalEngine (fast, no artefacts on smooth areas).
- * - Larger selection: PatchMatchEngine (exemplar-based, handles textures and complex backgrounds).
+ * - Medium selection on a small image: PatchMatchEngine directly (single-pass is fine).
+ * - Large image (> [TILED_MEGAPIXELS] MP) with any non-trivial selection: TiledRemovalEngine to
+ *   avoid OOM by splitting the fill into overlapping tiles.
  *
  * This keeps the user experience simple: they never need to choose.
  */
 object AutoRemovalEngine : RemovalEngine {
     override val id = "auto"
 
-    /** Mask-coverage fraction above which we switch to PatchMatch. */
+    /** Mask-coverage fraction below which we use the basic fill (fast, good for tiny spots). */
     private const val BASIC_THRESHOLD = 0.015f   // 1.5 % of the image
+
+    /** Images above this size in megapixels are processed via the tiling engine. */
+    private const val TILED_MEGAPIXELS = 2.0
 
     override fun remove(source: Bitmap, mask: BooleanArray, progress: (Float) -> Unit, cancelled: () -> Boolean): Bitmap {
         val coverage = mask.count { it }.toFloat() / mask.size
-        val engine = if (coverage <= BASIC_THRESHOLD) BasicRemovalEngine else PatchMatchEngine
+        val mp = source.width.toLong() * source.height / 1_000_000.0
+        val engine: RemovalEngine = when {
+            coverage <= BASIC_THRESHOLD      -> BasicRemovalEngine
+            mp > TILED_MEGAPIXELS            -> TiledRemovalEngine
+            else                             -> PatchMatchEngine
+        }
         return engine.remove(source, mask, progress, cancelled)
     }
 }

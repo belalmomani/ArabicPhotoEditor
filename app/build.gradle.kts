@@ -57,4 +57,7 @@ dependencies {
 
     // On-device inference engine for the background-removal model (Apache-2.0 / MIT).
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+
+    // JVM unit tests (no Android framework needed).
+    testImplementation("junit:junit:4.13.2")
 }

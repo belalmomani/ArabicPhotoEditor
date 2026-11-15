@@ -279,12 +279,22 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
 
                     if (cancelRequested) break
 
-                    // Colour correction on Default.
+                    // Colour correction on Default; recycle the raw fill afterwards.
                     val corrected = withContext(Dispatchers.Default) {
-                        ColourMatcher.correct(filled, fullMask)
+                        val c = ColourMatcher.correct(filled, fullMask)
+                        // If ColourMatcher returned a *new* bitmap (correction was applied),
+                        // recycle the raw fill to free memory immediately.
+                        if (c !== filled) filled.recycle()
+                        c
                     }
 
+                    // Recycle the previous working photo if it is no longer the source image
+                    // and not still in the undo timeline.
+                    val prevWorking = workingPhoto
                     workingPhoto = corrected
+                    if (prevWorking !== source && !timeline.any { it.photo === prevWorking }) {
+                        prevWorking.recycle()
+                    }
 
                     // Update remaining selection (remove consumed region from maskBool).
                     for (i in region.indices) maskBool[i] = false
