@@ -316,6 +316,11 @@
     <string name="cleanup_failed">تعذّرت الإزالة</string>
     <string name="cleanup_memory">الصورة كبيرة جداً ولم تكفِ الذاكرة. جرّب تصغير الصورة.</string>
     <string name="cleanup_basic_note_tiled">المحرك يختار تلقائياً: الصور الكبيرة تُعالَج بالتقطيع لحماية الذاكرة.</string>
+    <string name="cleanup_comparing">قبل التعديل</string>
+    <string name="cleanup_exit_title">تجاهل التعديلات؟</string>
+    <string name="cleanup_exit_body">أجريت تعديلات على الصورة ولم تُطبَّق بعد. إن خرجت الآن ستُفقد هذه التعديلات.</string>
+    <string name="cleanup_exit_discard">خروج بدون حفظ</string>
+    <string name="cleanup_exit_cancel">تراجع</string>
     <string name="tool_brush">فرشاة</string>
     <string name="tool_eraser">استبعاد</string>
     <string name="tool_hand">تحريك</string>

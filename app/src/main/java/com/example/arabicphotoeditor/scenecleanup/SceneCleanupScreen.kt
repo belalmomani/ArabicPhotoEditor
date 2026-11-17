@@ -4,6 +4,13 @@ import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,8 +26,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -29,6 +38,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -37,6 +47,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,6 +77,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -103,9 +116,51 @@ fun SceneCleanupScreen(
     }
 
     var showBefore by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
+
+    // Intercept back when there are unsaved changes — ask the user first.
+    val handleBack: () -> Unit = {
+        if (vm.changed && !vm.processing) showExitDialog = true
+        else onBack()
+    }
+
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            title = {
+                Text(
+                    stringResource(R.string.cleanup_exit_title),
+                    color = EditorColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Text(
+                    stringResource(R.string.cleanup_exit_body),
+                    color = EditorColors.TextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showExitDialog = false; onBack() }) {
+                    Text(stringResource(R.string.cleanup_exit_discard), color = Color(0xFFFF3B30))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitDialog = false }) {
+                    Text(stringResource(R.string.cleanup_exit_cancel), color = EditorColors.Accent)
+                }
+            },
+            containerColor = EditorColors.Surface,
+        )
+    }
+
     val revision = vm.revision // read so the screen follows the timeline
     val shown = if (showBefore && vm.changed) vm.original else vm.photo
-    val overlay = remember(revision) { vm.mask?.let { buildOverlay(it) } }
+
+    // Overlay bitmap cache: reuse the same Bitmap object (setPixels in-place)
+    // when the mask dimensions haven't changed, avoiding an allocation per stroke.
+    val overlayCache = remember { OverlayCache() }
+    val overlay = remember(revision) { vm.mask?.let { overlayCache.update(it) } }
     val detectionState = vm.detectionState
     val detectedRegions = (detectionState as? DetectionState.Done)?.regions ?: emptyList()
     val qualityReport = vm.qualityReport
@@ -118,7 +173,7 @@ fun SceneCleanupScreen(
                 canApply = vm.changed && !vm.processing,
                 onUndo = vm::undo,
                 onRedo = vm::redo,
-                onBack = onBack,
+                onBack = handleBack,
                 onApply = { vm.photo?.let(onApply) },
             )
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -138,7 +193,7 @@ fun SceneCleanupScreen(
                         detectedRegions = if (!showBefore) detectedRegions else emptyList(),
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // Status hint
+                    // Status hint — fades in/out smoothly
                     val hint: String? = when {
                         vm.processing -> null
                         detectionState == DetectionState.Running ->
@@ -150,39 +205,105 @@ fun SceneCleanupScreen(
                         vm.hasSelection -> stringResource(R.string.cleanup_hint_ready)
                         else -> stringResource(R.string.cleanup_hint_empty)
                     }
-                    if (hint != null) {
+                    AnimatedVisibility(
+                        visible = hint != null,
+                        enter = fadeIn(tween(220)),
+                        exit = fadeOut(tween(180)),
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+                    ) {
+                        if (hint != null) {
+                            Text(
+                                hint,
+                                color = EditorColors.TextPrimary,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(EditorColors.Surface.copy(alpha = 0.88f))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                    // "Before" badge — shown while holding Compare
+                    AnimatedVisibility(
+                        visible = showBefore,
+                        enter = fadeIn(tween(150)),
+                        exit = fadeOut(tween(150)),
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+                    ) {
                         Text(
-                            hint,
-                            color = EditorColors.TextPrimary,
+                            stringResource(R.string.cleanup_comparing),
+                            color = Color.White,
                             fontSize = 12.sp,
-                            textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.Medium,
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 8.dp, start = 12.dp, end = 12.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(EditorColors.Surface.copy(alpha = 0.88f))
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
                         )
                     }
                 }
             }
-            if (qualityReport != null) {
-                QualityCard(
-                    report = qualityReport,
-                    onRetry = vm::retry,
-                    onDismiss = vm::dismissQuality,
-                )
+            // Quality card slides in from bottom
+            AnimatedVisibility(
+                visible = qualityReport != null,
+                enter = slideInVertically(tween(260)) { it } + fadeIn(tween(260)),
+                exit  = slideOutVertically(tween(200)) { it } + fadeOut(tween(200)),
+            ) {
+                if (qualityReport != null) {
+                    QualityCard(
+                        report = qualityReport,
+                        onRetry = vm::retry,
+                        onDismiss = vm::dismissQuality,
+                    )
+                }
             }
             CleanupControls(vm, onCompare = { showBefore = it })
         }
     }
 }
 
+/**
+ * Reusable overlay bitmap that updates its pixel buffer in-place.
+ * Avoids allocating a new Bitmap on every brush stroke; only reallocates when
+ * the mask size changes (new photo or first open).
+ */
+private class OverlayCache {
+    private var cached: Bitmap? = null
+    private val pixelBuf = IntArray(0).let { arrayOfNulls<IntArray>(1) }  // lazy
+
+    fun update(mask: SelectionMask): Bitmap {
+        val w = mask.width; val h = mask.height
+        val existing = cached
+        val bmp = if (existing != null && existing.width == w && existing.height == h && !existing.isRecycled) {
+            existing
+        } else {
+            existing?.recycle()
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { cached = it }
+        }
+        // Reuse or allocate the pixel buffer.
+        val buf = if (pixelBuf[0]?.size == w * h) pixelBuf[0]!!
+                  else IntArray(w * h).also { pixelBuf[0] = it }
+        for (i in buf.indices) buf[i] = if (mask.data[i].toInt() != 0) SelectionColor else 0
+        bmp.setPixels(buf, 0, w, 0, 0, w, h)
+        return bmp
+    }
+}
+
+/** Fallback: build an overlay from scratch (used in tests / preview). */
 private fun buildOverlay(mask: SelectionMask): Bitmap {
     val pixels = IntArray(mask.width * mask.height) { if (mask.data[it].toInt() != 0) SelectionColor else 0 }
     val bitmap = Bitmap.createBitmap(mask.width, mask.height, Bitmap.Config.ARGB_8888)
     bitmap.setPixels(pixels, 0, mask.width, 0, 0, mask.width, mask.height)
     return bitmap
+}
+
+/** Semantic content description for the photo canvas (used by screen readers). */
+private fun canvasDesc(hasSelection: Boolean, processing: Boolean): String = when {
+    processing  -> "جارٍ معالجة الصورة"
+    hasSelection -> "لوحة التحرير — يوجد تحديد نشط"
+    else         -> "لوحة التحرير — لا يوجد تحديد"
 }
 
 // ---------------------------------------------------------------- top bar
@@ -236,7 +357,13 @@ private fun CleanupCanvas(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    BoxWithConstraints(modifier.clipToBounds().background(EditorColors.Workspace)) {
+    val desc = canvasDesc(vm.hasSelection, vm.processing)
+    BoxWithConstraints(
+        modifier
+            .clipToBounds()
+            .background(EditorColors.Workspace)
+            .semantics { contentDescription = desc },
+    ) {
         val cw = constraints.maxWidth.toFloat()
         val ch = constraints.maxHeight.toFloat()
         val fit = min(cw / bitmap.width, ch / bitmap.height)
@@ -487,10 +614,15 @@ private fun CleanupControls(vm: SceneCleanupViewModel, onCompare: (Boolean) -> U
             }
         }
         if (vm.processing) {
-            // Progress row: bar + cancel
+            // Progress row: animated bar + cancel
+            val animatedProgress by animateFloatAsState(
+                targetValue = vm.progress.coerceIn(0f, 1f),
+                animationSpec = tween(durationMillis = 180),
+                label = "cleanup_progress",
+            )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LinearProgressIndicator(
-                    progress = { vm.progress.coerceIn(0f, 1f) },
+                    progress = { animatedProgress },
                     modifier = Modifier.weight(1f),
                     color = EditorColors.Accent,
                 )
