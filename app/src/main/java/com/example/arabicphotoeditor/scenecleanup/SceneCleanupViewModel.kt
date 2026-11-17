@@ -175,8 +175,9 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun countRegions(mask: SelectionMask): Int {
         if (mask.isEmpty()) return 0
-        val full = mask.toFullResolution(mask.width, mask.height, 0)
-        return RegionLabeler.label(full, mask.width, mask.height).size
+        // Count directly on the selection-mask data without upscaling.
+        val bool = BooleanArray(mask.data.size) { mask.data[it] != 0.toByte() }
+        return RegionLabeler.label(bool, mask.width, mask.height).size
     }
 
     /**
@@ -343,29 +344,37 @@ class SceneCleanupViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Undoes the last removal and re-runs it, so a different random seed in PatchMatch may produce
-     * a better result. Only available when a quality report exists.
+     * Undoes the last removal and re-runs it so PatchMatch picks a different random seed.
+     * Only available when [qualityReport] is non-null (i.e. a removal just finished).
+     *
+     * Strategy: walk the timeline backwards until we find the state whose photo matches the
+     * pre-removal photo, then push the saved mask back on top and call [remove].  If the
+     * timeline was trimmed and the state is gone, push fresh from the saved bitmaps.
      */
     fun retry() {
         val retryMask  = lastRemovalMask  ?: return
         val retryPhoto = lastRemovalPhoto ?: return
         if (processing) return
-        // Undo the removal steps (go back to the state before the removal).
-        // The retry mask records the selection that was used; the photo is the state before.
-        // We push a fresh state with the original photo + selection, then call remove().
+
         qualityReport = null
-        while (cursor > 0 && timeline.getOrNull(cursor)?.photo !== retryPhoto) {
-            if (cursor > 0) cursor-- else break
+
+        // Walk back to the pre-removal state.
+        var found = false
+        for (i in cursor downTo 0) {
+            if (timeline.getOrNull(i)?.photo === retryPhoto) {
+                cursor = i
+                found = true
+                break
+            }
         }
-        // If we found the original photo in the timeline, truncate the future and re-select.
-        val cur = timeline.getOrNull(cursor)
-        if (cur != null && cur.photo === retryPhoto) {
-            push(retryPhoto, retryMask)
-        } else {
-            // Timeline was trimmed; push fresh.
-            push(retryPhoto, retryMask)
+        // Whether we found it or not, push the original photo + mask as a new state to retry.
+        if (!found) {
+            // Timeline was trimmed — reinsert the saved state.
+            while (timeline.size > cursor + 1) timeline.removeAt(timeline.lastIndex)
+            timeline.add(State(retryPhoto, retryMask))
+            cursor = timeline.lastIndex
         }
-        revision++
+        push(retryPhoto, retryMask)
         remove()
     }
 

@@ -1,11 +1,10 @@
 package com.example.arabicphotoeditor.scenecleanup
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Memory-safe wrapper around [PatchMatchEngine] that splits large masked regions into overlapping
@@ -179,7 +178,7 @@ object TiledRemovalEngine : RemovalEngine {
         // Each pixel needs ~12 bytes in the worst case (source crop + fill + composite blend).
         val safeMp = (heapMb / 12.0).coerceIn(0.5, 4.0)
         val mp = min(targetMp, safeMp)
-        return kotlin.math.sqrt(mp * 1_000_000.0).toInt().coerceIn(256, 2048)
+        return sqrt(mp * 1_000_000.0).toInt().coerceIn(256, 2048)
     }
 
     // ── overlap blend ─────────────────────────────────────────────────────────

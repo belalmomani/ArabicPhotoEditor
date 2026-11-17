@@ -118,6 +118,7 @@ object PatchMatchEngine : RemovalEngine {
         w: Int, h: Int,
         progress: (Float) -> Unit,
         cancelled: () -> Boolean,
+        rng: RngState = RngState(),
     ) {
         // confidence[i]: fraction of patch that was originally known. Starts at 1 for known, 0 for unknown.
         val conf = FloatArray(w * h) { if (!mask[it]) 1f else 0f }
@@ -142,7 +143,7 @@ object PatchMatchEngine : RemovalEngine {
             val by = best / w
 
             // Find the best matching patch from the known region.
-            val (sx, sy) = findBestPatch(px, mask, bx, by, w, h)
+            val (sx, sy) = findBestPatch(px, mask, bx, by, w, h, rng)
 
             // Copy and blend the patch.
             copyPatch(px, mask, conf, bx, by, sx, sy, w, h)
@@ -157,7 +158,7 @@ object PatchMatchEngine : RemovalEngine {
             }
 
             remaining--
-            if (remaining % 200 == 0) progress(0.05f + 0.85f * (1f - remaining / total))
+            if (remaining % 50 == 0) progress(0.05f + 0.85f * (1f - remaining / total))
         }
 
         // Final feather blend along the original mask boundary.
@@ -232,7 +233,8 @@ object PatchMatchEngine : RemovalEngine {
      * halo around the mask.
      */
     private fun findBestPatch(
-        px: IntArray, mask: BooleanArray, tx: Int, ty: Int, w: Int, h: Int
+        px: IntArray, mask: BooleanArray, tx: Int, ty: Int, w: Int, h: Int,
+        rng: RngState = RngState(),
     ): Pair<Int, Int> {
         val EXCL = PATCH + 2        // exclusion halo around the mask
 
@@ -269,8 +271,8 @@ object PatchMatchEngine : RemovalEngine {
 
         // Seed with the centre of the image as a safe fallback (may be excluded).
         for (attempt in 0 until SEARCH_ITERS * 4) {
-            val sx = PATCH + ((w - 2 * PATCH) * rng()) .toInt().coerceIn(0, w - 2 * PATCH - 1)
-            val sy = PATCH + ((h - 2 * PATCH) * rng()).toInt().coerceIn(0, h - 2 * PATCH - 1)
+            val sx = PATCH + ((w - 2 * PATCH) * rng.next()).toInt().coerceIn(0, w - 2 * PATCH - 1)
+            val sy = PATCH + ((h - 2 * PATCH) * rng.next()).toInt().coerceIn(0, h - 2 * PATCH - 1)
             if (excluded(sx, sy)) continue
             val d = ssd(sx, sy)
             if (d < bestSSD) { bestSSD = d; bestX = sx; bestY = sy }
@@ -381,10 +383,15 @@ object PatchMatchEngine : RemovalEngine {
     @Suppress("NOTHING_TO_INLINE")
     private inline fun grey(p: Int) = (r(p) * 77 + g(p) * 150 + b(p) * 29) / 256f / 255f
 
-    // Simple LCG for fast pseudo-random numbers (no allocation, no synchronisation).
-    private var seed = 0x12345678L
-    private fun rng(): Float {
-        seed = seed * 6364136223846793005L + 1442695040888963407L
-        return ((seed ushr 33) and 0xFFFF).toFloat() / 65535f
+    /**
+     * A per-call LCG seed holder, so concurrent calls from [TiledRemovalEngine] on different
+     * tiles don't share (and corrupt) the same mutable seed. The seed is passed into [fill] and
+     * [findBestPatch] via the [RngState] wrapper.
+     */
+    private class RngState(var seed: Long = System.nanoTime() xor 0x12345678L) {
+        fun next(): Float {
+            seed = seed * 6364136223846793005L + 1442695040888963407L
+            return ((seed ushr 33) and 0xFFFF).toFloat() / 65535f
+        }
     }
 }

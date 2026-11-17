@@ -90,24 +90,33 @@ object QualityChecker {
     // ── 2. Blotch ────────────────────────────────────────────────────────────
 
     private fun blotchScore(px: IntArray, mask: BooleanArray, w: Int, h: Int): Float {
-        fun variance(pixels: List<Int>): Float {
-            if (pixels.size < 2) return 0f
-            var sr = 0f; var sg = 0f; var sb = 0f
-            for (p in pixels) { sr += r(p); sg += g(p); sb += b(p) }
-            val n = pixels.size.toFloat()
+        // Sample at most MAX_SAMPLE pixels from each region to stay memory-safe on large images.
+        val MAX_SAMPLE = 8_000
+
+        fun varianceSampled(indices: List<Int>): Float {
+            val step = if (indices.size <= MAX_SAMPLE) 1 else indices.size / MAX_SAMPLE
+            var sr = 0f; var sg = 0f; var sb = 0f; var n = 0
+            var i = 0; while (i < indices.size) {
+                val p = px[indices[i]]; sr += r(p); sg += g(p); sb += b(p); n++
+                i += step
+            }
+            if (n < 2) return 0f
             val mr = sr / n; val mg = sg / n; val mb = sb / n
-            var v = 0f
-            for (p in pixels) {
+            var v = 0f; i = 0
+            while (i < indices.size) {
+                val p = px[indices[i]]
                 val dr = r(p) - mr; val dg = g(p) - mg; val db = b(p) - mb
                 v += dr * dr + dg * dg + db * db
+                i += step
             }
             return v / n
         }
-        val inside  = (0 until mask.size).filter {  mask[it] }.map { px[it] }
-        val outside = (0 until mask.size).filter { !mask[it] }.take(inside.size + 1).map { px[it] }
+
+        val inside  = (0 until mask.size).filter {  mask[it] }
+        val outside = (0 until mask.size).filter { !mask[it] }
         if (inside.isEmpty() || outside.isEmpty()) return 0f
-        val vi = variance(inside)
-        val vo = variance(outside).coerceAtLeast(1f)
+        val vi = varianceSampled(inside)
+        val vo = varianceSampled(outside).coerceAtLeast(1f)
         return ((vi / vo - 1f) / 3f).coerceIn(0f, 1f)   // ratio > 4 → score 1
     }
 
